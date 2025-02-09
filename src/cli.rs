@@ -1,4 +1,3 @@
-use crate::config::Config;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]

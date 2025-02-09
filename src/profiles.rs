@@ -1,87 +1,217 @@
+use crate::{
+    error::Error, utils::MULTI_PATH_SEPRATOR, ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
+};
 use std::{
-    fs::{self, File},
-    io::{Read, Write},
-    path::Path,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::PathBuf,
+    process::Command,
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::{config::Config, json::client::Client, LAUNCHER_DIR, PROFILES_DIR};
+use crate::{
+    config::{Config, ConfigMut},
+    json::client::Client,
+    PROFILES_PATH,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Profile {
-    pub name: String,
-    pub version: String,
-
-    #[serde(skip)]
-    pub config: Option<Config>,
+    name: String,
+    version: String,
 }
 
-pub fn init_profile() -> Vec<Profile> {
-    let file = File::open("launcher/profiles.json");
-
-    let mut file = if file.is_err() {
-        let mut file = File::create_new("launcher/profiles.json").unwrap();
-        file.write("[]".as_bytes()).unwrap();
-
-        file
-    } else {
-        file.unwrap()
-    };
-
-    let mut buffer = String::new();
-
-    file.read_to_string(&mut buffer)
-        .expect("failed to read launcher/profiles.json");
-
-    if buffer.as_str() == "{}" {
-        return Vec::new();
+impl Profile {
+    pub fn new(name: String, version: String) -> Self {
+        Self { name, version }
     }
 
-    let mut profiles: Vec<Profile> = serde_json::from_str(buffer.as_str()).unwrap();
+    fn dir_path(&self) -> PathBuf {
+        PROFILES_PATH.join(self.name.as_str())
+    }
 
-    for profile in &mut profiles {
-        let profile_spec_config = format!("{PROFILES_DIR}/{}/config.json", profile.name);
-        let profile_spec_config = Path::new(&profile_spec_config);
+    fn config_path(&self) -> PathBuf {
+        self.dir_path().join("config.json")
+    }
 
-        let config = if profile_spec_config.exists() {
-            let config = fs::read_to_string(profile_spec_config).unwrap();
-            Some(serde_json::from_str(&config).unwrap())
-        } else {
-            None
+    fn client_jar_path(&self) -> PathBuf {
+        self.dir_path().join("client.jar")
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub fn config(&self) -> Option<Config> {
+        let config_path = self.config_path();
+        let config = fs::read_to_string(&config_path).ok()?;
+        Some(serde_json::from_str(&config).expect("failed to deserialize config.json"))
+    }
+
+    pub fn config_mut(&mut self) -> Option<ConfigMut> {
+        let config_path = self.config_path();
+        let config = self.config()?;
+        Some(ConfigMut::new(config, &config_path))
+    }
+
+    pub fn client(&self) -> Client {
+        let dir_path = self.dir_path();
+        let client_path = dir_path.join("client.json");
+        fs::create_dir_all(dir_path).unwrap();
+
+        let data = match fs::read_to_string(&client_path).ok() {
+            Some(data) => data,
+            None => {
+                let manifest = &*MANIFEST;
+                let version = manifest.download_version(&self.version).unwrap().unwrap();
+                fs::write(client_path, &version).unwrap();
+                version
+            }
         };
 
-        profile.config = config;
+        serde_json::from_str(&data).expect("failed to deserialize client.json")
     }
 
-    profiles
-}
+    pub fn download(&self) -> Result<(), Error> {
+        let path = self.dir_path();
+        let client = self.client();
+        println!("downloading profile {}", self.name);
+        client.download(&path)
+    }
 
-pub fn write_profile(profile: &Profile) {
-    let mut profiles = init_profile();
-    profiles.push(profile.to_owned());
+    pub fn execute(&self, global_config: Config) -> Result<(), Error> {
+        let path = self.dir_path();
+        let client = self.client();
+        let config = self.config().unwrap_or(global_config);
 
-    let str = serde_json::to_string(&profiles).unwrap();
+        let libs = client.get_req_libs();
+        let mut classpath = libs
+            .into_iter()
+            .map(|x| LIBS_PATH.join(x))
+            .map(|x| x.display().to_string())
+            .collect::<Vec<_>>();
 
-    fs::write("launcher/profiles.json", str).unwrap();
-}
+        let client_jar = self.client_jar_path();
+        classpath.push(client_jar.display().to_string());
 
-pub fn write_profiles(profiles: &Vec<Profile>) {
-    let profiles_json =
-        serde_json::to_string_pretty(profiles).expect("Failed to serialize profiles");
+        let classpath = classpath.join(MULTI_PATH_SEPRATOR);
 
-    let profiles_path = format!("{}/profiles.json", LAUNCHER_DIR);
-    fs::write(profiles_path, profiles_json).expect("Failed to write profiles to file");
-}
+        let natives_path = path.join(".natives");
+        let natives_path = natives_path.display();
 
-pub fn read_profile_setup(name: String) -> Client {
-    let mut client: Client = serde_json::from_str(
-        fs::read_to_string(format!("{PROFILES_DIR}{0}/{0}.json", name))
+        println!("classpath: {classpath}, java: {}", config.current_java_path);
+        Command::new(&config.current_java_path)
+            .arg(format!("-Xmx{}M", config.max_ram))
+            .arg(format!("-Xms{}M", config.min_ram))
+            .arg(format!("-Djava.library.path={natives_path}"))
+            .arg("-cp")
+            .arg(classpath)
+            .arg(client.main_class)
+            .arg("--accessToken")
+            .arg(&config.access_token)
+            .arg("--username")
+            .arg(&config.username)
+            .arg("--version")
+            .arg(&self.version)
+            .arg("--gameDir")
+            .arg(path)
+            .arg("--assetsDir")
+            .arg(&*ASSETS_PATH)
+            .arg("--assetIndex")
+            .arg(client.assets)
+            .spawn()
             .unwrap()
-            .as_str(),
-    )
-    .unwrap();
+            .wait()
+            .unwrap();
+        Ok(())
+    }
+}
 
-    client.profile_name = Some(name);
-    client
+#[derive(Debug)]
+pub struct Profiles {
+    profiles: Vec<Profile>,
+    fd: File,
+}
+
+impl Profiles {
+    pub fn path() -> PathBuf {
+        LAUNCHER_PATH.join("profiles.json")
+    }
+
+    pub fn fetch() -> Self {
+        let mut fd = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(Self::path())
+            .unwrap();
+
+        let mut buf = String::new();
+        fd.read_to_string(&mut buf)
+            .expect("failed to read profiles.json");
+
+        let profiles = serde_json::from_str(buf.as_str()).unwrap_or_default();
+        Self { profiles, fd }
+    }
+
+    pub fn get_named(&self, name: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|x| x.name == name)
+    }
+
+    pub fn get_named_mut(&mut self, name: &str) -> Option<&mut Profile> {
+        self.profiles.iter_mut().find(|x| x.name == name)
+    }
+
+    pub fn add(&mut self, profile: Profile) {
+        self.profiles.push(profile);
+        self.update();
+    }
+
+    pub fn update(&mut self) {
+        let profiles_json =
+            serde_json::to_string_pretty(&self.profiles).expect("Failed to serialize profiles");
+
+        self.fd.set_len(0).unwrap();
+        self.fd.seek(SeekFrom::Start(0)).unwrap();
+        self.fd
+            .write_all(profiles_json.as_bytes())
+            .expect("Failed to write profiles to file");
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Profile> {
+        self.profiles.get(index)
+    }
+
+    pub fn iter(&self) -> ProfilesIter {
+        ProfilesIter {
+            profiles: self,
+            index: 0,
+        }
+    }
+}
+
+impl Drop for Profiles {
+    fn drop(&mut self) {
+        self.update();
+    }
+}
+
+pub struct ProfilesIter<'a> {
+    profiles: &'a Profiles,
+    index: usize,
+}
+
+impl<'a> Iterator for ProfilesIter<'a> {
+    type Item = &'a Profile;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let profile = self.profiles.get(self.index)?;
+        self.index += 1;
+        Some(profile)
+    }
 }

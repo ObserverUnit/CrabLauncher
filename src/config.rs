@@ -1,12 +1,12 @@
-use clap::Args;
 use serde::{Deserialize, Serialize};
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
 use std::path::Path;
 
-use crate::java::{self, JavaInstallation};
-use crate::LAUNCHER_DIR;
+use crate::java::{self};
+use crate::LAUNCHER_PATH;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
@@ -20,8 +20,6 @@ pub struct Config {
     pub access_token: String,
 
     pub current_java_path: String,
-
-    pub java_list: Vec<JavaInstallation>,
 }
 
 impl Default for Config {
@@ -36,15 +34,13 @@ impl Default for Config {
             username: String::from("dev"),
             access_token: String::from("0"),
             current_java_path: java_list[0].path.clone(),
-            java_list,
         }
     }
 }
 
 impl Config {
-    pub fn init_config() -> Self {
-        let path = format!("{LAUNCHER_DIR}/config.json");
-        let path = Path::new(&path);
+    pub fn get() -> Self {
+        let path = LAUNCHER_PATH.join("config.json");
 
         let config = if !path.exists() {
             let config = Self::default();
@@ -60,5 +56,67 @@ impl Config {
         };
 
         config
+    }
+}
+
+#[derive(Debug)]
+pub struct ConfigMut<'a> {
+    config: Config,
+    fd: File,
+    marker: PhantomData<&'a mut Config>,
+}
+
+impl<'a> ConfigMut<'a> {
+    pub fn new(config: Config, path: &Path) -> Self {
+        let fd = File::options().write(true).open(path).unwrap();
+        Self {
+            config,
+            fd,
+            marker: PhantomData,
+        }
+    }
+
+    pub fn get(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.config.username = name;
+    }
+
+    pub fn set_access_token(&mut self, token: String) {
+        self.config.access_token = token;
+    }
+
+    pub fn set_entry(&mut self, entry: &str, value: Option<String>) -> Result<(), &str> {
+        match entry {
+            "config.access_token" => {
+                self.config.access_token = value.ok_or("couldnt find value")?;
+            }
+
+            "config.username" => {
+                self.config.username = value.ok_or("couldnt find value")?;
+            }
+
+            _ => return Err("couldnt find entry"),
+        }
+        Ok(())
+    }
+
+    pub fn save(&mut self) {
+        self.fd.set_len(0).unwrap();
+        self.fd.seek(SeekFrom::Start(0)).unwrap();
+        self.fd
+            .write_all(
+                serde_json::to_string_pretty(&self.config)
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .unwrap();
+    }
+}
+impl<'a> Drop for ConfigMut<'a> {
+    fn drop(&mut self) {
+        self.save();
     }
 }

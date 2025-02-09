@@ -1,7 +1,14 @@
-use std::collections::HashMap;
+use crate::{
+    client::{download::Download, rule::Rule},
+    error::Error,
+    utils, LIBS_PATH,
+};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
-use serde_json::Value;
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -24,13 +31,6 @@ pub struct Os {
     pub name: Option<OsName>,
     pub version: Option<String>,
     pub arch: Option<Arch>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct Rule {
-    pub action: String,
-    pub features: Option<Value>,
-    pub os: Option<Os>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,17 +56,6 @@ pub enum Arguments {
     MinecraftArgs(String),
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Download {
-    pub id: Option<String>,
-    pub path: Option<String>,
-    pub sha1: String,
-    pub size: i32,
-    #[serde(rename = "totalSize")]
-    pub total_size: Option<i32>,
-    pub url: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct Downloads {
     pub client: Download,
@@ -90,7 +79,7 @@ pub struct LibraryDownload {
 
 #[derive(Debug, Deserialize)]
 pub struct Extract {
-    pub exclude: Option<Vec<String>>,
+    pub exclude: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,18 +109,106 @@ pub struct Client {
     pub libraries: Vec<Library>,
     #[serde(rename = "mainClass")]
     pub main_class: String,
-
-    pub profile_name: Option<String>,
 }
 
 // assets
 #[derive(Deserialize, Debug)]
 pub struct Object {
     pub hash: String,
+    #[allow(unused)]
     pub size: i32,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Index {
     pub objects: HashMap<String, Object>,
+}
+
+impl Client {
+    pub fn download(self, path: &Path) -> Result<(), Error> {
+        println!("Downloading assets...");
+        self.asset_index.download_indexs()?;
+        println!("Downloading libraries...");
+        for lib in self.libraries {
+            if !(lib.rules.is_none()
+                || lib
+                    .rules
+                    .is_some_and(|rules| rules.iter().all(Rule::is_allowed)))
+            {
+                continue;
+            }
+            // downloading lib
+            if let Some(ref artifact) = lib.downloads.artifact {
+                artifact.download_in(&*LIBS_PATH)?;
+            }
+            // downloading natives required by lib
+            if let Some(ref natives) = lib.natives {
+                let Some(ref classifiers) = lib.downloads.classifiers else {
+                    continue;
+                };
+
+                for (os, native) in natives {
+                    if *os != crate::OS {
+                        continue;
+                    }
+                    let classifier = classifiers.get(native).unwrap();
+
+                    let bytes = classifier.download_in(&*LIBS_PATH)?;
+
+                    if let Some(ref extract_rules) = lib.extract {
+                        let natives_dir = path.join(".natives");
+                        utils::extract(&bytes, &natives_dir, extract_rules.exclude.as_deref())
+                            .unwrap();
+                    }
+
+                    break;
+                }
+            }
+        }
+        println!("Downloading client...");
+        let client_path = path.join("client.jar");
+        // downloading client.jar
+        self.downloads.client.download_in(&client_path)?;
+        Ok(())
+    }
+
+    /// gets pathes of required libraries to run client
+    /// all pathes are relative to `LIBS_PATH`
+    pub fn get_req_libs(&self) -> Vec<PathBuf> {
+        let mut libs = Vec::new();
+
+        for lib in &self.libraries {
+            if !(lib.rules.is_none()
+                || lib
+                    .rules
+                    .as_ref()
+                    .is_some_and(|rules| rules.iter().all(Rule::is_allowed)))
+            {
+                continue;
+            }
+
+            if let Some(ref natives) = lib.natives {
+                let Some(ref classifiers) = lib.downloads.classifiers else {
+                    continue;
+                };
+
+                for (os, native) in natives {
+                    if os != &crate::OS {
+                        continue;
+                    }
+
+                    let classifier = classifiers.get(native).unwrap();
+                    let path = classifier.path.clone().unwrap();
+                    libs.push(path);
+                    break;
+                }
+            }
+
+            if let Some(ref artifact) = lib.downloads.artifact {
+                libs.push(artifact.path.clone().unwrap());
+            }
+        }
+
+        return libs;
+    }
 }

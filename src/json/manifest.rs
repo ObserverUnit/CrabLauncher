@@ -1,46 +1,16 @@
-use crate::LAUNCHER_DIR;
+use serde::Deserialize;
 
-use serde::{de::Visitor, Deserialize};
+use std::fs::{self};
 
-use std::fs;
+use crate::LAUNCHER_PATH;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
 pub enum VersionKind {
     Release,
     Snapshot,
     OldAlpha,
     OldBeta,
-}
-
-impl<'de> Deserialize<'de> for VersionKind {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct VersionVistor;
-        impl<'de> Visitor<'de> for VersionVistor {
-            type Value = VersionKind;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "old_alpha, old_beta, release, or snapshot")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match v {
-                    "old_alpha" => Ok(VersionKind::OldAlpha),
-                    "old_beta" => Ok(VersionKind::OldBeta),
-                    "release" => Ok(VersionKind::Release),
-                    "snapshot" => Ok(VersionKind::Snapshot),
-                    _ => Err(E::custom(format!("invaild value for VersionKind {}", v))),
-                }
-            }
-        }
-
-        deserializer.deserialize_str(VersionVistor)
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -49,11 +19,9 @@ pub struct Version {
     #[serde(rename = "type")]
     pub kind: VersionKind,
     pub url: String,
-    #[allow(unused)]
-    time: String,
-    #[allow(unused)]
+    pub time: String,
     #[serde(rename = "releaseTime")]
-    release_time: String,
+    pub release_time: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,30 +37,31 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn init_manifest() -> Self {
-        let path = format!("{LAUNCHER_DIR}version_manifest.json");
+    pub fn get() -> Self {
+        let path = LAUNCHER_PATH.join("version_manifest.json");
         // download version info
         let res =
             reqwest::blocking::get("https://launchermeta.mojang.com/mc/game/version_manifest.json");
         // if offline use pre-downloaded file
-        let manifest = if res.is_ok() {
-            let res = res.unwrap();
+        if let Ok(res) = res {
+            let bytes = res.bytes().unwrap();
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("failed creating dir");
+            }
+            fs::write(&path, bytes).expect("failed writing file version_manifest.json");
+        }
 
-            let buffer = res.text().unwrap();
-            let bytes = buffer.as_bytes();
+        let buffer = fs::read_to_string(path).expect("failed reading file version_manifest.json");
+        serde_json::from_str(buffer.as_str()).expect("failed parsing file version_manifest.json")
+    }
 
-            fs::write(path, bytes).expect("failed writing file version_manifest.json");
-
-            serde_json::from_str(buffer.as_str())
-                .expect("failed reading file version_manifest.json")
-        } else {
-            let buffer = fs::read_to_string(path)
-                .expect("opened version_manifest.json, but failed reading it");
-
-            serde_json::from_str(buffer.as_str())
-                .expect("failed parsing file version_manifest.json")
+    /// downloads client.json for a given version
+    pub fn download_version(&self, version: &str) -> Result<Option<String>, reqwest::Error> {
+        let Some(version) = self.versions.iter().find(|x| x.id == version) else {
+            return Ok(None);
         };
-
-        manifest
+        let res = reqwest::blocking::get(&version.url)?;
+        let text = res.text()?;
+        Ok(Some(text))
     }
 }

@@ -1,38 +1,38 @@
-use crate::json::client::Rule;
+use serde::Deserialize;
+use serde_json::Value;
 
-impl Rule {
-    pub fn is_allowed(&self) -> bool {
-        let mut is_matched = true;
-        if self.os.is_some() {
-            let os = self.os.clone().unwrap();
+use crate::json::client::Os;
 
-            if os.name.is_some() {
-                if !(os.name.unwrap() == crate::OS) {
-                    is_matched = false;
-                }
-            }
-
-            if os.arch.is_some() {
-                if !(os.arch.unwrap() == crate::ARCH) {
-                    is_matched = false;
-                }
-            }
-        }
-
-        if is_matched && self.action == "allow" || !is_matched && self.action == "disallow" {
-            return true;
-        }
-
-        return false;
-    }
+#[derive(Deserialize, Debug, Clone)]
+pub struct Rule {
+    pub action: String,
+    pub features: Option<Value>,
+    pub os: Option<Os>,
 }
 
-pub fn is_allowed(rules: &Vec<Rule>) -> bool {
-    for rule in rules {
-        if !rule.is_allowed() {
-            return false;
+impl Rule {
+    fn matches(&self) -> bool {
+        if let Some(ref os) = self.os {
+            if let Some(ref os_name) = os.name {
+                if *os_name != crate::OS {
+                    return false;
+                }
+            }
+
+            if let Some(ref os_arch) = os.arch {
+                if *os_arch != crate::ARCH {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    pub fn is_allowed(&self) -> bool {
+        let is_matched = self.matches();
+        match self.action.as_str() {
+            "allow" => is_matched,
+            "disallow" => !is_matched,
+            _ => false,
         }
     }
-
-    return true;
 }
