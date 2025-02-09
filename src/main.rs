@@ -12,7 +12,6 @@ mod config;
 mod env;
 
 mod client;
-mod error;
 mod manifest;
 
 mod java;

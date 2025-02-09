@@ -1,5 +1,9 @@
 use crate::{
-    error::Error, utils::MULTI_PATH_SEPRATOR, ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
+    utils::{
+        errors::{ExecutionError, InstallationError},
+        MULTI_PATH_SEPRATOR,
+    },
+    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
 };
 use std::{
     fs::{self, File, OpenOptions},
@@ -77,27 +81,39 @@ impl Profile {
         serde_json::from_str(&data).expect("failed to deserialize client.json")
     }
 
-    pub fn download(&self) -> Result<(), Error> {
+    pub fn download(&self) -> Result<(), InstallationError> {
         let path = self.dir_path();
         let client = self.client();
         println!("downloading profile {}", self.name);
-        client.download(&path)
+        client.install(&path)
     }
 
-    pub fn execute(&self, global_config: Config) -> Result<(), Error> {
+    pub fn execute(&self, global_config: Config) -> Result<(), ExecutionError> {
         let path = self.dir_path();
         let client = self.client();
         let config = self.config().unwrap_or(global_config);
 
-        let libs = client.get_req_libs();
-        let mut classpath = libs
-            .into_iter()
-            .map(|x| LIBS_PATH.join(x))
-            .map(|x| x.display().to_string())
-            .collect::<Vec<_>>();
+        let mut classpath = Vec::new();
+        let libs = client.libs();
+
+        for lib in libs {
+            if let Some(ref native) = lib.platform_native() {
+                let path = native.path.as_ref().unwrap();
+                let full_path = LIBS_PATH.join(path);
+
+                classpath.push(format!("{}", full_path.display()));
+            }
+
+            if let Some(ref artifact) = lib.downloads.artifact {
+                let path = artifact.path.as_ref().unwrap();
+                let full_path = LIBS_PATH.join(path);
+
+                classpath.push(format!("{}", full_path.display()));
+            }
+        }
 
         let client_jar = self.client_jar_path();
-        classpath.push(client_jar.display().to_string());
+        classpath.push(format!("{}", client_jar.display()));
 
         let classpath = classpath.join(MULTI_PATH_SEPRATOR);
 
