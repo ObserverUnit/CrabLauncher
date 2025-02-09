@@ -11,8 +11,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    client::Client,
     config::{Config, ConfigMut},
-    json::client::Client,
     PROFILES_PATH,
 };
 

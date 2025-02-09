@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 
 use config::Config;
-use json::client::{Arch, OsName};
 use lazy_static::lazy_static;
 use profiles::Profile;
+use utils::{Arch, OsName};
 
 mod cli;
 mod config;
@@ -13,7 +13,7 @@ mod env;
 
 mod client;
 mod error;
-mod json;
+mod manifest;
 
 mod java;
 mod profiles;
@@ -55,7 +55,7 @@ lazy_static! {
     pub static ref ENV: Env<'static> = Env::new(&*MANIFEST, &*GLOBAL_CONFIG);
 }
 
-use crate::json::manifest::Manifest;
+use manifest::Manifest;
 
 fn main() {
     let parse = Cli::try_parse().unwrap_or_else(|e| e.exit());

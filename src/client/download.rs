@@ -4,9 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::Index;
+use crate::{error::Error, ASSETS_PATH};
 use serde::Deserialize;
-
-use crate::{error::Error, json::client::Index, ASSETS_PATH};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Download {
@@ -17,6 +17,14 @@ pub struct Download {
     #[serde(rename = "totalSize")]
     pub total_size: Option<i32>,
     pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Downloads {
+    pub client: Download,
+    pub client_mappings: Option<Download>,
+    pub server: Download,
+    pub server_mappings: Option<Download>,
 }
 
 impl Download {

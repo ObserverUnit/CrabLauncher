@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::json::manifest::Manifest;
+use crate::manifest::Manifest;
 use crate::profiles::Profiles;
 
 #[derive(Debug)]

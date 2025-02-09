@@ -8,7 +8,7 @@ use regex::Regex;
 use rust_search::SearchBuilder;
 use serde::{Deserialize, Serialize};
 
-use crate::{json::client::OsName, OS};
+use crate::{utils::OsName, OS};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JavaInstallation {
     pub path: String,

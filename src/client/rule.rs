@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::json::client::Os;
+use super::Os;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Rule {
