@@ -70,9 +70,8 @@ fn main() {
         cli::Commands::Run { name } => match env.execute(&name) {
             Ok(_) => println!("Minecraft exited successfully"),
             Err(err) => match err {
-                ExecutionError::MinecraftError { log, exit_code } => {
+                ExecutionError::MinecraftError(exit_code) => {
                     eprintln!("Minecraft exited with code {}", exit_code);
-                    eprintln!("----- Minecraft log -----\n{log}\n----- Minecraft log end -----",);
                 }
                 ExecutionError::IoError(err) => {
                     eprintln!("IO error: {}", err);

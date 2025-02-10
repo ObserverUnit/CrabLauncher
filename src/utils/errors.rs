@@ -30,7 +30,8 @@ impl From<io::Error> for InstallationError {
 pub enum ExecutionError<'a> {
     InstallationError(InstallationError),
     ProfileDoesntExist(&'a str),
-    MinecraftError { log: String, exit_code: i32 },
+    /// an error while executing Minecraft, contains the exit code of the process
+    MinecraftError(i32),
     IoError(io::Error),
 }
 

@@ -9,7 +9,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use serde::{Deserialize, Serialize};
@@ -143,13 +143,15 @@ impl Profile {
             .arg(&*ASSETS_PATH)
             .arg("--assetIndex")
             .arg(client.assets)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .output()?;
 
         if !output.status.success() {
-            return Err(ExecutionError::MinecraftError {
-                log: String::from_utf8_lossy(&output.stderr).to_string(),
-                exit_code: output.status.code().unwrap(),
-            });
+            return Err(ExecutionError::MinecraftError(
+                output.status.code().unwrap(),
+            ));
         }
 
         Ok(())
