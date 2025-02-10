@@ -27,13 +27,21 @@ impl From<io::Error> for InstallationError {
 }
 
 #[derive(Debug)]
-pub enum ExecutionError {
+pub enum ExecutionError<'a> {
     InstallationError(InstallationError),
-    MinecraftError(String),
+    ProfileDoesntExist(&'a str),
+    MinecraftError { log: String, exit_code: i32 },
+    IoError(io::Error),
 }
 
-impl From<InstallationError> for ExecutionError {
+impl<'a> From<InstallationError> for ExecutionError<'a> {
     fn from(err: InstallationError) -> Self {
         ExecutionError::InstallationError(err)
+    }
+}
+
+impl<'a> From<io::Error> for ExecutionError<'a> {
+    fn from(err: io::Error) -> Self {
+        ExecutionError::IoError(err)
     }
 }

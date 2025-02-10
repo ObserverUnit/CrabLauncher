@@ -4,8 +4,7 @@ use clap::Parser;
 
 use config::Config;
 use lazy_static::lazy_static;
-use profiles::Profile;
-use utils::{Arch, OsName};
+use utils::{errors::ExecutionError, Arch, OsName};
 
 mod cli;
 mod config;
@@ -50,46 +49,42 @@ lazy_static! {
     pub static ref LIBS_PATH: PathBuf = LAUNCHER_PATH.join("libs");
     pub static ref ASSETS_PATH: PathBuf = LAUNCHER_PATH.join("assets");
     pub static ref PROFILES_PATH: PathBuf = LAUNCHER_PATH.join("profiles");
-    /// Environment
-    pub static ref ENV: Env<'static> = Env::new(&*MANIFEST, &*GLOBAL_CONFIG);
 }
 
 use manifest::Manifest;
 
 fn main() {
     let parse = Cli::try_parse().unwrap_or_else(|e| e.exit());
-
+    // TODO: move everything to a separate crate and only keep the main function
     let mut env = Env::new(&*MANIFEST, &*GLOBAL_CONFIG);
 
     match parse.command {
-        cli::Commands::New(new) => env.profiles_mut().add(Profile::new(new.name, new.version)),
-        cli::Commands::Edit { name, entry, value } => {
-            let profile = env.profiles_mut().get_named_mut(&name);
+        cli::Commands::New(new) => env
+            .add(&new.name, &new.version)
+            .expect("failed to add profile"),
 
-            if let Some(profile) = profile {
-                let config = profile.config_mut();
-                if let Some(mut config) = config {
-                    let _ = config.set_entry(&entry, value);
+        cli::Commands::Edit { name, entry, value } => env
+            .edit(&name, &entry, value.clone())
+            .expect(&format!("failed to set {name}'s {entry} to {value:?}")),
+
+        cli::Commands::Run { name } => match env.execute(&name) {
+            Ok(_) => println!("Minecraft exited successfully"),
+            Err(err) => match err {
+                ExecutionError::MinecraftError { log, exit_code } => {
+                    eprintln!("Minecraft exited with code {}", exit_code);
+                    eprintln!("----- Minecraft log -----\n{log}\n----- Minecraft log end -----",);
                 }
-            }
-        }
-
-        cli::Commands::Run { name } => {
-            let profiles = env.profiles_mut();
-            let Some(profile) = profiles.get_named_mut(&name) else {
-                eprintln!("profile {} not found", name);
-                return;
-            };
-
-            println!("downloading....");
-            profile.download().expect("failed to download client");
-            println!("downloading: OK\nrunning....");
-            profile
-                .execute(GLOBAL_CONFIG.clone())
-                .expect("failed to run client");
-            println!("FAILED or closed...");
-        }
-
+                ExecutionError::IoError(err) => {
+                    eprintln!("IO error: {}", err);
+                }
+                ExecutionError::ProfileDoesntExist(name) => {
+                    eprintln!("profile {} not found", name);
+                }
+                ExecutionError::InstallationError(err) => {
+                    eprintln!("installation error: {:?}", err);
+                }
+            },
+        },
         cli::Commands::List => {
             println!("profiles:");
             for profile in env.profiles().iter() {

@@ -88,10 +88,12 @@ impl Profile {
         client.install(&path)
     }
 
-    pub fn execute(&self, global_config: Config) -> Result<(), ExecutionError> {
+    pub fn execute(&self, fallback_config: &Config) -> Result<(), ExecutionError<'static>> {
         let path = self.dir_path();
         let client = self.client();
-        let config = self.config().unwrap_or(global_config);
+
+        let config = self.config();
+        let config = config.as_ref().unwrap_or(fallback_config);
 
         let mut classpath = Vec::new();
         let libs = client.libs();
@@ -121,7 +123,8 @@ impl Profile {
         let natives_path = natives_path.display();
 
         println!("classpath: {classpath}, java: {}", config.current_java_path);
-        Command::new(&config.current_java_path)
+        // TODO: make use of client.arguments
+        let output = Command::new(&config.current_java_path)
             .arg(format!("-Xmx{}M", config.max_ram))
             .arg(format!("-Xms{}M", config.min_ram))
             .arg(format!("-Djava.library.path={natives_path}"))
@@ -140,10 +143,15 @@ impl Profile {
             .arg(&*ASSETS_PATH)
             .arg("--assetIndex")
             .arg(client.assets)
-            .spawn()
-            .unwrap()
-            .wait()
-            .unwrap();
+            .output()?;
+
+        if !output.status.success() {
+            return Err(ExecutionError::MinecraftError {
+                log: String::from_utf8_lossy(&output.stderr).to_string(),
+                exit_code: output.status.code().unwrap(),
+            });
+        }
+
         Ok(())
     }
 }
