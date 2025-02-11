@@ -3,6 +3,7 @@ use std::io;
 use super::download;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum InstallationError {
     ZipError(zip::result::ZipError),
     DownloadError(download::DownloadError),

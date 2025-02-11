@@ -19,22 +19,47 @@ pub mod rule;
 #[derive(Deserialize, Debug, Clone)]
 pub struct Os {
     pub name: Option<OsName>,
-    pub version: Option<String>,
     pub arch: Option<Arch>,
 }
 
-#[derive(Deserialize, Debug)]
+impl Os {
+    /// Returns true if the current platform matches the given [`Os`]
+    pub fn matches(&self) -> bool {
+        (self.name.is_none() || self.name == Some(crate::OS))
+            && (self.arch.is_none() || self.arch == Some(crate::ARCH))
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ArgValue {
     Value(String),
     Values(Vec<String>),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum Argument {
     Arg(String),
     Rule { rules: Vec<Rule>, value: ArgValue },
+}
+
+impl Argument {
+    fn into_raw(self) -> Vec<String> {
+        match self {
+            Argument::Arg(arg) => vec![arg],
+            Argument::Rule { rules, value } => {
+                if rules.iter().all(Rule::is_allowed) {
+                    match value {
+                        ArgValue::Value(value) => vec![value],
+                        ArgValue::Values(values) => values,
+                    }
+                } else {
+                    vec![]
+                }
+            }
+        }
+    }
 }
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
@@ -46,12 +71,40 @@ pub enum Arguments {
     MinecraftArgs(String),
 }
 
-#[derive(Debug, Deserialize)]
-pub struct JavaVersion {
-    pub component: String,
-    #[serde(rename = "majorVersion")]
-    pub major_version: i32,
+impl Arguments {
+    /// maps `Arguments` to (JVM Args, Game Args)
+    /// only maps arguments that are allowed by their rules
+    pub fn into_raw(self) -> (Vec<String>, Vec<String>) {
+        match self {
+            Arguments::Args { game, jvm } => {
+                let jvm: Vec<String> = jvm.into_iter().map(Argument::into_raw).flatten().collect();
+                let game = game.into_iter().map(Argument::into_raw).flatten().collect();
+                (jvm, game)
+            }
+            Arguments::MinecraftArgs(args) => {
+                let game = args.split(' ').map(|arg| arg.to_string()).collect();
+                // FIXME: a little hack to have jvm args when on older versions
+                // TODO: fix this when we have
+                // our own meta format
+                let jvm = [
+                    "-Djava.library.path={natives_directory}",
+                    "-cp",
+                    r"${classpath}",
+                ];
+                let jvm = jvm.into_iter().map(|x| x.to_string()).collect();
+
+                (jvm, game)
+            }
+        }
+    }
 }
+
+// #[derive(Debug, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub struct JavaVersion {
+//     pub component: String,
+//     pub major_version: u16,
+// }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct LibraryDownload {
@@ -69,8 +122,6 @@ pub type Natives = HashMap<OsName, String>;
 pub struct Library {
     pub downloads: LibraryDownload,
     pub extract: Option<Extract>,
-
-    pub name: String,
     pub natives: Option<Natives>,
     pub rules: Option<Vec<Rule>>,
 }
@@ -97,21 +148,17 @@ impl Library {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Client {
     #[serde(alias = "minecraftArguments")]
     pub arguments: Arguments,
-    #[serde(rename = "assetIndex")]
     pub asset_index: Download,
 
     pub assets: String,
     pub downloads: Downloads,
-    pub id: String,
 
-    #[serde(rename = "javaVersion")]
-    pub java_version: Option<JavaVersion>,
-
+    /*     pub java_version: Option<JavaVersion>, */
     pub libraries: Vec<Library>,
-    #[serde(rename = "mainClass")]
     pub main_class: String,
 }
 
@@ -162,13 +209,7 @@ impl Client {
     }
 
     pub fn libs(&self) -> impl Iterator<Item = &Library> {
-        self.libraries.iter().filter(|lib| {
-            lib.rules.is_none()
-                || lib
-                    .rules
-                    .as_ref()
-                    .is_some_and(|rules| rules.iter().all(Rule::is_allowed))
-        })
+        self.libraries.iter().filter(|l| l.is_allowed())
     }
 
     /// installs the libraries required by current client and uses the given path as the base

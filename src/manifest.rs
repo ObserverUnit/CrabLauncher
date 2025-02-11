@@ -16,23 +16,11 @@ pub enum VersionKind {
 #[derive(Deserialize, Debug)]
 pub struct Version {
     pub id: String,
-    #[serde(rename = "type")]
-    pub kind: VersionKind,
     pub url: String,
-    pub time: String,
-    #[serde(rename = "releaseTime")]
-    pub release_time: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Latest {
-    pub release: String,
-    pub snapshot: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Manifest {
-    pub latest: Latest,
     pub versions: Vec<Version>,
 }
 

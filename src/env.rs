@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::manifest::Manifest;
 use crate::profiles::{Profile, Profiles};
 use crate::utils::errors::ExecutionError;
@@ -7,14 +6,12 @@ use crate::utils::errors::ExecutionError;
 pub struct Env<'a> {
     profiles: Profiles,
     manifest: &'a Manifest,
-    config: &'a Config,
 }
 
 impl<'a> Env<'a> {
-    pub fn new(manifest: &'a Manifest, config: &'a Config) -> Self {
+    pub fn new(manifest: &'a Manifest) -> Self {
         Self {
             manifest,
-            config,
             profiles: Profiles::fetch(),
         }
     }
@@ -29,11 +26,21 @@ impl<'a> Env<'a> {
             .get_named(name)
             .ok_or(ExecutionError::ProfileDoesntExist(name))?;
         profile.download()?;
-        profile.execute(self.config)?;
+        profile.execute()?;
         Ok(())
     }
 
     pub fn add(&mut self, name: &str, version: &str) -> Result<(), ()> {
+        if self
+            .manifest
+            .versions
+            .iter()
+            .find(|v| &v.id == version)
+            .is_none()
+        {
+            return Err(());
+        }
+
         let profile = Profile::new(name.to_string(), version.to_string());
         self.profiles.add(profile);
         Ok(())
@@ -41,11 +48,15 @@ impl<'a> Env<'a> {
 
     pub fn edit(&mut self, name: &str, entry: &str, value: Option<String>) -> Result<(), ()> {
         let profile = self.profiles.get_named_mut(name);
-        // TODO: that simply is not how it works
+        // FIXME: that simply is not how it works
         if let Some(profile) = profile {
             let config = profile.config_mut();
             if let Some(mut config) = config {
-                let _ = config.set_entry(entry, value);
+                if let Some(value) = value {
+                    config.get_entry_mut(entry).map(|x| *x = value);
+                } else {
+                    config.remove_entry(entry);
+                }
             }
         }
         Ok(())

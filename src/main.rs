@@ -56,7 +56,7 @@ use manifest::Manifest;
 fn main() {
     let parse = Cli::try_parse().unwrap_or_else(|e| e.exit());
     // TODO: move everything to a separate crate and only keep the main function
-    let mut env = Env::new(&*MANIFEST, &*GLOBAL_CONFIG);
+    let mut env = Env::new(&*MANIFEST);
 
     match parse.command {
         cli::Commands::New(new) => env

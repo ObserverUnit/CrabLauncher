@@ -7,22 +7,19 @@ use crate::utils::{self, download::DownloadError};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Download {
-    pub id: Option<String>,
-    pub path: Option<PathBuf>,
-    pub sha1: String,
-    pub size: i32,
-    #[serde(rename = "totalSize")]
-    pub total_size: Option<i32>,
+    #[serde(rename = "path")]
+    pub sub_path: Option<PathBuf>,
+    // TODO: verify sha1 and size
+    // pub sha1: String,
+    // pub size: i32,
     pub url: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Downloads {
     pub client: Download,
-    pub client_mappings: Option<Download>,
-    pub server: Download,
-    pub server_mappings: Option<Download>,
 }
 
 impl Download {
@@ -31,7 +28,7 @@ impl Download {
     }
 
     pub fn download_in(&self, path: &Path) -> Result<Vec<u8>, DownloadError> {
-        let full_path = if let Some(ref child) = self.path {
+        let full_path = if let Some(ref child) = self.sub_path {
             &path.join(child)
         } else {
             path

@@ -3,9 +3,10 @@ use crate::{
         errors::{ExecutionError, InstallationError},
         MULTI_PATH_SEPRATOR,
     },
-    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
+    ASSETS_PATH, GLOBAL_CONFIG, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
 };
 use std::{
+    borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
@@ -51,19 +52,32 @@ impl Profile {
         &self.version
     }
 
-    pub fn config(&self) -> Option<Config> {
+    /// attempts to read the config.json file for this profile
+    fn read_config(&self) -> Option<Config> {
         let config_path = self.config_path();
         let config = fs::read_to_string(&config_path).ok()?;
         Some(serde_json::from_str(&config).expect("failed to deserialize config.json"))
     }
 
+    /// returns the config used by this profile, and merges it with the global config
+    pub fn get_config(&self) -> Config {
+        let global_config = GLOBAL_CONFIG.clone();
+        if let Some(mut config) = self.read_config() {
+            config.merge(global_config);
+            config
+        } else {
+            global_config
+        }
+    }
+
+    /// returns a mutable reference to the config used by this profile if any
     pub fn config_mut(&mut self) -> Option<ConfigMut> {
         let config_path = self.config_path();
-        let config = self.config()?;
+        let config = self.read_config()?;
         Some(ConfigMut::new(config, &config_path))
     }
 
-    pub fn client(&self) -> Client {
+    pub fn read_client(&self) -> Client {
         let dir_path = self.dir_path();
         let client_path = dir_path.join("client.json");
         fs::create_dir_all(dir_path).unwrap();
@@ -83,66 +97,92 @@ impl Profile {
 
     pub fn download(&self) -> Result<(), InstallationError> {
         let path = self.dir_path();
-        let client = self.client();
+        let client = self.read_client();
         println!("downloading profile {}", self.name);
         client.install(&path)
     }
 
-    pub fn execute(&self, fallback_config: &Config) -> Result<(), ExecutionError<'static>> {
-        let path = self.dir_path();
-        let client = self.client();
-
-        let config = self.config();
-        let config = config.as_ref().unwrap_or(fallback_config);
-
-        let mut classpath = Vec::new();
+    fn classpath(&self, client: &Client) -> String {
         let libs = client.libs();
 
+        let mut classpath = Vec::new();
         for lib in libs {
             if let Some(ref native) = lib.platform_native() {
-                let path = native.path.as_ref().unwrap();
+                let path = native.sub_path.as_ref().unwrap();
                 let full_path = LIBS_PATH.join(path);
-
                 classpath.push(format!("{}", full_path.display()));
             }
-
             if let Some(ref artifact) = lib.downloads.artifact {
-                let path = artifact.path.as_ref().unwrap();
+                let path = artifact.sub_path.as_ref().unwrap();
                 let full_path = LIBS_PATH.join(path);
-
                 classpath.push(format!("{}", full_path.display()));
             }
         }
 
         let client_jar = self.client_jar_path();
         classpath.push(format!("{}", client_jar.display()));
+        classpath.join(MULTI_PATH_SEPRATOR)
+    }
 
-        let classpath = classpath.join(MULTI_PATH_SEPRATOR);
+    /// generates the java arguments required to launch this profile
+    fn generate_arguments(&self, config: &Config) -> Vec<String> {
+        let client = self.read_client();
+        let classpath = self.classpath(&client);
+        let game_dir = self.dir_path();
+        let natives_dir = game_dir.join(".natives");
 
-        let natives_path = path.join(".natives");
-        let natives_path = natives_path.display();
+        let raw_args = client.arguments;
+        let (mut jvm_args, mut game_args) = raw_args.into_raw();
+        let regex = regex::Regex::new(r"\$\{(\w+)\}")
+            .expect("failed to compile regex for parsing arguments");
 
-        println!("classpath: {classpath}, java: {}", config.current_java_path);
+        let fmt_arg = |arg: &str| {
+            Some(match arg {
+                "game_directory" => game_dir.to_string_lossy(),
+                "assets_root" => ASSETS_PATH.to_string_lossy(),
+                "assets_index_name" => Cow::Borrowed(client.assets.as_str()),
+                "version_name" => Cow::Borrowed(self.version.as_str()),
+                "classpath" => Cow::Borrowed(classpath.as_str()),
+                "natives_directory" => natives_dir.to_string_lossy(),
+                _ => Cow::Borrowed(config.get_entry(arg)?),
+            })
+        };
+
+        let fmt_args = |args: &mut Vec<String>| {
+            for arg in args {
+                // FIXME: use OsString and skip non-existent arguments (maybe stop using regex)
+                let new_value = regex.replace_all(&arg, |caps: &regex::Captures| {
+                    let fmt_spec = caps.get(1).unwrap().as_str();
+                    fmt_arg(fmt_spec).unwrap_or_default()
+                });
+
+                if let Cow::Owned(value) = new_value {
+                    *arg = value;
+                }
+            }
+        };
+
+        fmt_args(&mut game_args);
+        fmt_args(&mut jvm_args);
+
+        jvm_args.push(client.main_class.clone());
+        [jvm_args, game_args].concat()
+    }
+
+    pub fn execute(&self) -> Result<(), ExecutionError<'static>> {
+        let config = self.get_config();
+        let current_java_path = config.get_entry("current_java_path").unwrap();
+        let max_ram = config.get_entry("max_ram").unwrap();
+        let min_ram = config.get_entry("min_ram").unwrap();
+
+        let args = self.generate_arguments(&config);
+
+        dbg!("executing with args: {:?}", &args);
         // TODO: make use of client.arguments
-        let output = Command::new(&config.current_java_path)
-            .arg(format!("-Xmx{}M", config.max_ram))
-            .arg(format!("-Xms{}M", config.min_ram))
-            .arg(format!("-Djava.library.path={natives_path}"))
-            .arg("-cp")
-            .arg(classpath)
-            .arg(client.main_class)
-            .arg("--accessToken")
-            .arg(&config.access_token)
-            .arg("--username")
-            .arg(&config.username)
-            .arg("--version")
-            .arg(&self.version)
-            .arg("--gameDir")
-            .arg(path)
-            .arg("--assetsDir")
-            .arg(&*ASSETS_PATH)
-            .arg("--assetIndex")
-            .arg(client.assets)
+        let output = Command::new(current_java_path)
+            .arg(format!("-Xmx{}M", max_ram))
+            .arg(format!("-Xms{}M", min_ram))
+            .args(args)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
