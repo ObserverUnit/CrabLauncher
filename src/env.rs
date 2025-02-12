@@ -53,9 +53,9 @@ impl<'a> Env<'a> {
             let config = profile.config_mut();
             if let Some(mut config) = config {
                 if let Some(value) = value {
-                    config.get_entry_mut(entry).map(|x| *x = value);
+                    config.get_mut(entry).map(|x| *x = value);
                 } else {
-                    config.remove_entry(entry);
+                    config.remove(entry);
                 }
             }
         }

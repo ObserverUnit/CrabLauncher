@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::java::{self};
 use crate::LAUNCHER_PATH;
@@ -28,9 +28,13 @@ impl Default for Config {
 }
 
 impl Config {
-    /// reads the global config
-    pub fn get() -> Self {
-        let path = LAUNCHER_PATH.join("config.json");
+    fn global_config_path() -> PathBuf {
+        LAUNCHER_PATH.join("config.json")
+    }
+
+    /// Reads the global config and returns a memory read-only copy of it
+    pub fn read_global() -> Self {
+        let path = Self::global_config_path();
 
         let config = if !path.exists() {
             let config = Self::default();
@@ -48,20 +52,16 @@ impl Config {
         config
     }
 
-    pub fn get_entry(&self, entry: &str) -> Option<&str> {
+    pub fn get(&self, entry: &str) -> Option<&str> {
         self.0.get(entry).map(|x| x.as_str())
-    }
-
-    pub fn get_entry_mut(&mut self, entry: &str) -> Option<&mut String> {
-        self.0.get_mut(entry)
-    }
-
-    pub fn remove_entry(&mut self, entry: &str) {
-        self.0.remove(entry);
     }
 
     pub fn merge(&mut self, other: Self) {
         self.0.extend(other.0);
+    }
+
+    pub fn into_mut<'a, 'b>(self, path: &'b Path) -> ConfigMut<'a> {
+        ConfigMut::new(self, path)
     }
 }
 
@@ -80,6 +80,14 @@ impl<'a> ConfigMut<'a> {
             fd,
             marker: PhantomData,
         }
+    }
+
+    pub fn get_mut(&mut self, entry: &str) -> Option<&mut String> {
+        self.0.get_mut(entry)
+    }
+
+    pub fn remove(&mut self, entry: &str) {
+        self.0.remove(entry);
     }
 
     pub fn save(&mut self) {

@@ -3,7 +3,7 @@ use crate::{
         errors::{ExecutionError, InstallationError},
         MULTI_PATH_SEPRATOR,
     },
-    ASSETS_PATH, GLOBAL_CONFIG, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
+    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
 };
 use std::{
     borrow::Cow,
@@ -61,7 +61,7 @@ impl Profile {
 
     /// returns the config used by this profile, and merges it with the global config
     pub fn get_config(&self) -> Config {
-        let global_config = GLOBAL_CONFIG.clone();
+        let global_config = Config::read_global();
         if let Some(mut config) = self.read_config() {
             config.merge(global_config);
             config
@@ -73,8 +73,8 @@ impl Profile {
     /// returns a mutable reference to the config used by this profile if any
     pub fn config_mut(&mut self) -> Option<ConfigMut> {
         let config_path = self.config_path();
-        let config = self.read_config()?;
-        Some(ConfigMut::new(config, &config_path))
+        let config = self.read_config()?.into_mut(&config_path);
+        Some(config)
     }
 
     pub fn read_client(&self) -> Client {
@@ -144,7 +144,7 @@ impl Profile {
                 "version_name" => Cow::Borrowed(self.version.as_str()),
                 "classpath" => Cow::Borrowed(classpath.as_str()),
                 "natives_directory" => natives_dir.to_string_lossy(),
-                _ => Cow::Borrowed(config.get_entry(arg)?),
+                _ => Cow::Borrowed(config.get(arg)?),
             })
         };
 
@@ -171,9 +171,9 @@ impl Profile {
 
     pub fn execute(&self) -> Result<(), ExecutionError<'static>> {
         let config = self.get_config();
-        let current_java_path = config.get_entry("current_java_path").unwrap();
-        let max_ram = config.get_entry("max_ram").unwrap();
-        let min_ram = config.get_entry("min_ram").unwrap();
+        let current_java_path = config.get("current_java_path").unwrap();
+        let max_ram = config.get("max_ram").unwrap();
+        let min_ram = config.get("min_ram").unwrap();
 
         let args = self.generate_arguments(&config);
 

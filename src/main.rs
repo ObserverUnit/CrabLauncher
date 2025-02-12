@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-use config::Config;
 use lazy_static::lazy_static;
 use utils::{errors::ExecutionError, Arch, OsName};
 
@@ -43,7 +42,6 @@ pub const ARCH: Arch = if cfg!(target_arch = "x86") {
 lazy_static! {
     // Global Manifest
     static ref MANIFEST: Manifest = Manifest::get();
-    static ref GLOBAL_CONFIG: Config = Config::get();
     // Paths
     pub static ref LAUNCHER_PATH: &'static Path = &Path::new("launcher");
     pub static ref LIBS_PATH: PathBuf = LAUNCHER_PATH.join("libs");
