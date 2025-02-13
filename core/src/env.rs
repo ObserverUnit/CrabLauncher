@@ -1,17 +1,15 @@
-use crate::manifest::Manifest;
 use crate::profiles::{Profile, Profiles};
 use crate::utils::errors::ExecutionError;
+use crate::MANIFEST;
 
 #[derive(Debug)]
-pub struct Env<'a> {
+pub struct Env {
     profiles: Profiles,
-    manifest: &'a Manifest,
 }
 
-impl<'a> Env<'a> {
-    pub fn new(manifest: &'a Manifest) -> Self {
+impl Env {
+    pub fn new() -> Self {
         Self {
-            manifest,
             profiles: Profiles::fetch(),
         }
     }
@@ -31,8 +29,8 @@ impl<'a> Env<'a> {
     }
 
     pub fn add(&mut self, name: &str, version: &str) -> Result<(), ()> {
-        if self
-            .manifest
+        let manifest = &*MANIFEST;
+        if manifest
             .versions
             .iter()
             .find(|v| &v.id == version)

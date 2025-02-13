@@ -3,21 +3,6 @@
 version = 3
 
 [[package]]
-name = "CrabLauncher"
-version = "0.1.0"
-dependencies = [
- "clap",
- "lazy_static",
- "regex",
- "reqwest",
- "rust_search",
- "serde",
- "serde_json",
- "velcro",
- "zip",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -315,6 +300,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53fe5e26ff1b7aef8bca9c6080520cfb8d9333c7568e1829cef191a9723e5504"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crab-launcher"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crab-launcher-core",
+]
+
+[[package]]
+name = "crab-launcher-core"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "regex",
+ "reqwest",
+ "rust_search",
+ "serde",
+ "serde_json",
+ "velcro",
+ "zip",
 ]
 
 [[package]]

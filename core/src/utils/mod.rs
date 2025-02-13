@@ -21,6 +21,6 @@ pub enum Arch {
     ARM64,
 }
 
-pub mod download;
+pub(crate) mod download;
 pub mod errors;
-pub mod zip;
+pub(crate) mod zip;
