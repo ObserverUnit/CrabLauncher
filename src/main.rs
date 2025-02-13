@@ -84,7 +84,7 @@ fn main() {
         },
         cli::Commands::List => {
             println!("profiles:");
-            for profile in env.profiles().iter() {
+            for profile in env.profiles().fetch_profiles() {
                 println!("{}:\tversion: {}", profile.name(), profile.version());
             }
         }

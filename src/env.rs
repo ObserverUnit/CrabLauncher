@@ -25,7 +25,7 @@ impl<'a> Env<'a> {
             .profiles
             .get_named(name)
             .ok_or(ExecutionError::ProfileDoesntExist(name))?;
-        profile.download()?;
+        profile.install()?;
         profile.execute()?;
         Ok(())
     }
@@ -47,17 +47,14 @@ impl<'a> Env<'a> {
     }
 
     pub fn edit(&mut self, name: &str, entry: &str, value: Option<String>) -> Result<(), ()> {
-        let profile = self.profiles.get_named_mut(name);
+        println!("setting {} entry {} to {:?}", name, entry, value);
+        let mut profile = self.profiles.get_named(name).ok_or(())?;
         // FIXME: that simply is not how it works
-        if let Some(profile) = profile {
-            let config = profile.config_mut();
-            if let Some(mut config) = config {
-                if let Some(value) = value {
-                    config.get_mut(entry).map(|x| *x = value);
-                } else {
-                    config.remove(entry);
-                }
-            }
+        let mut config = profile.config_mut();
+        if let Some(value) = value {
+            config.set(entry, value);
+        } else {
+            config.remove(entry);
         }
         Ok(())
     }

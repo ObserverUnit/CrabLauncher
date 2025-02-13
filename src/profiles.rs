@@ -1,5 +1,6 @@
 use crate::{
     utils::{
+        download::DownloadError,
         errors::{ExecutionError, InstallationError},
         MULTI_PATH_SEPRATOR,
     },
@@ -8,7 +9,7 @@ use crate::{
 use std::{
     borrow::Cow,
     fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufReader, Seek, SeekFrom},
     path::PathBuf,
     process::{Command, Stdio},
 };
@@ -62,42 +63,42 @@ impl Profile {
     /// returns the config used by this profile, and merges it with the global config
     pub fn get_config(&self) -> Config {
         let global_config = Config::read_global();
-        if let Some(mut config) = self.read_config() {
-            config.merge(global_config);
-            config
+        if let Some(config) = self.read_config() {
+            config.merge(global_config)
         } else {
             global_config
         }
     }
 
     /// returns a mutable reference to the config used by this profile if any
-    pub fn config_mut(&mut self) -> Option<ConfigMut> {
+    pub fn config_mut(&mut self) -> ConfigMut {
         let config_path = self.config_path();
-        let config = self.read_config()?.into_mut(&config_path);
-        Some(config)
+        self.read_config()
+            .unwrap_or(Config::empty())
+            .into_mut(&config_path)
     }
 
-    pub fn read_client(&self) -> Client {
+    pub fn read_client(&self) -> Result<Client, DownloadError> {
         let dir_path = self.dir_path();
         let client_path = dir_path.join("client.json");
-        fs::create_dir_all(dir_path).unwrap();
+        fs::create_dir_all(dir_path)?;
 
         let data = match fs::read_to_string(&client_path).ok() {
             Some(data) => data,
             None => {
                 let manifest = &*MANIFEST;
-                let version = manifest.download_version(&self.version).unwrap().unwrap();
-                fs::write(client_path, &version).unwrap();
+                let version = manifest.download_version(&self.version)?.unwrap();
+                fs::write(client_path, &version)?;
                 version
             }
         };
 
-        serde_json::from_str(&data).expect("failed to deserialize client.json")
+        Ok(serde_json::from_str(&data).expect("failed to deserialize client.json"))
     }
 
-    pub fn download(&self) -> Result<(), InstallationError> {
+    pub fn install(&self) -> Result<(), InstallationError> {
         let path = self.dir_path();
-        let client = self.read_client();
+        let client = self.read_client()?;
         println!("downloading profile {}", self.name);
         client.install(&path)
     }
@@ -125,8 +126,9 @@ impl Profile {
     }
 
     /// generates the java arguments required to launch this profile
+    /// NOTE: may panic if [`Self::install`] was not successfully executed first (assumes that the client.json file exists)
     fn generate_arguments(&self, config: &Config) -> Vec<String> {
-        let client = self.read_client();
+        let client = self.read_client().unwrap();
         let classpath = self.classpath(&client);
         let game_dir = self.dir_path();
         let natives_dir = game_dir.join(".natives");
@@ -138,19 +140,18 @@ impl Profile {
 
         let fmt_arg = |arg: &str| {
             Some(match arg {
-                "game_directory" => game_dir.to_string_lossy(),
-                "assets_root" => ASSETS_PATH.to_string_lossy(),
-                "assets_index_name" => Cow::Borrowed(client.assets.as_str()),
-                "version_name" => Cow::Borrowed(self.version.as_str()),
-                "classpath" => Cow::Borrowed(classpath.as_str()),
-                "natives_directory" => natives_dir.to_string_lossy(),
-                _ => Cow::Borrowed(config.get(arg)?),
+                "game_directory" => game_dir.to_str().unwrap(),
+                "assets_root" | "game_assets" => ASSETS_PATH.to_str().unwrap(),
+                "assets_index_name" => &client.assets,
+                "version_name" => self.version(),
+                "classpath" => classpath.as_str(),
+                "natives_directory" => natives_dir.to_str().unwrap(),
+                _ => config.get(arg)?,
             })
         };
 
         let fmt_args = |args: &mut Vec<String>| {
             for arg in args {
-                // FIXME: use OsString and skip non-existent arguments (maybe stop using regex)
                 let new_value = regex.replace_all(&arg, |caps: &regex::Captures| {
                     let fmt_spec = caps.get(1).unwrap().as_str();
                     fmt_arg(fmt_spec).unwrap_or_default()
@@ -200,7 +201,6 @@ impl Profile {
 
 #[derive(Debug)]
 pub struct Profiles {
-    profiles: Vec<Profile>,
     fd: File,
 }
 
@@ -209,75 +209,35 @@ impl Profiles {
         LAUNCHER_PATH.join("profiles.json")
     }
 
+    pub fn fetch_profiles(&self) -> Vec<Profile> {
+        let reader = BufReader::new(&self.fd);
+        serde_json::from_reader(reader).unwrap_or_default()
+    }
+
     pub fn fetch() -> Self {
-        let mut fd = OpenOptions::new()
+        let fd = OpenOptions::new()
             .read(true)
             .append(true)
             .create(true)
             .open(Self::path())
             .unwrap();
 
-        let mut buf = String::new();
-        fd.read_to_string(&mut buf)
-            .expect("failed to read profiles.json");
-
-        let profiles = serde_json::from_str(buf.as_str()).unwrap_or_default();
-        Self { profiles, fd }
+        Self { fd }
     }
 
-    pub fn get_named(&self, name: &str) -> Option<&Profile> {
-        self.profiles.iter().find(|x| x.name == name)
+    pub fn get_named(&self, name: &str) -> Option<Profile> {
+        let profiles = self.fetch_profiles();
+        profiles.iter().find(|x| x.name == name).cloned()
     }
 
-    pub fn get_named_mut(&mut self, name: &str) -> Option<&mut Profile> {
-        self.profiles.iter_mut().find(|x| x.name == name)
-    }
-
-    pub fn add(&mut self, profile: Profile) {
-        self.profiles.push(profile);
-        self.update();
-    }
-
-    pub fn update(&mut self) {
-        let profiles_json =
-            serde_json::to_string_pretty(&self.profiles).expect("Failed to serialize profiles");
-
+    fn write_profiles(&mut self, profiles: &[Profile]) {
         self.fd.set_len(0).unwrap();
         self.fd.seek(SeekFrom::Start(0)).unwrap();
-        self.fd
-            .write_all(profiles_json.as_bytes())
-            .expect("Failed to write profiles to file");
+        serde_json::to_writer_pretty(&self.fd, &profiles).unwrap();
     }
-
-    pub fn get(&self, index: usize) -> Option<&Profile> {
-        self.profiles.get(index)
-    }
-
-    pub fn iter(&self) -> ProfilesIter {
-        ProfilesIter {
-            profiles: self,
-            index: 0,
-        }
-    }
-}
-
-impl Drop for Profiles {
-    fn drop(&mut self) {
-        self.update();
-    }
-}
-
-pub struct ProfilesIter<'a> {
-    profiles: &'a Profiles,
-    index: usize,
-}
-
-impl<'a> Iterator for ProfilesIter<'a> {
-    type Item = &'a Profile;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let profile = self.profiles.get(self.index)?;
-        self.index += 1;
-        Some(profile)
+    pub fn add(&mut self, profile: Profile) {
+        let mut profiles = self.fetch_profiles();
+        profiles.push(profile);
+        self.write_profiles(&profiles);
     }
 }

@@ -87,7 +87,7 @@ impl Arguments {
                 // TODO: fix this when we have
                 // our own meta format
                 let jvm = [
-                    "-Djava.library.path={natives_directory}",
+                    "-Djava.library.path=${natives_directory}",
                     "-cp",
                     r"${classpath}",
                 ];

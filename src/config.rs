@@ -3,7 +3,7 @@ use velcro::hash_map_from;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,9 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn empty() -> Self {
+        Self(HashMap::new())
+    }
     fn global_config_path() -> PathBuf {
         LAUNCHER_PATH.join("config.json")
     }
@@ -56,8 +59,10 @@ impl Config {
         self.0.get(entry).map(|x| x.as_str())
     }
 
-    pub fn merge(&mut self, other: Self) {
-        self.0.extend(other.0);
+    /// Returns a new read-only config with the entries of `self` and `other` merged, favoring `self` over `other`
+    pub fn merge(self, mut other: Self) -> Self {
+        other.0.extend(self.0);
+        other
     }
 
     pub fn into_mut<'a, 'b>(self, path: &'b Path) -> ConfigMut<'a> {
@@ -74,7 +79,7 @@ pub struct ConfigMut<'a> {
 
 impl<'a> ConfigMut<'a> {
     pub fn new(config: Config, path: &Path) -> Self {
-        let fd = File::options().write(true).open(path).unwrap();
+        let fd = File::options().write(true).create(true).open(path).unwrap();
         Self {
             config,
             fd,
@@ -82,8 +87,8 @@ impl<'a> ConfigMut<'a> {
         }
     }
 
-    pub fn get_mut(&mut self, entry: &str) -> Option<&mut String> {
-        self.0.get_mut(entry)
+    pub fn set(&mut self, entry: &str, value: String) {
+        self.0.insert(entry.to_string(), value);
     }
 
     pub fn remove(&mut self, entry: &str) {
@@ -93,13 +98,7 @@ impl<'a> ConfigMut<'a> {
     pub fn save(&mut self) {
         self.fd.set_len(0).unwrap();
         self.fd.seek(SeekFrom::Start(0)).unwrap();
-        self.fd
-            .write_all(
-                serde_json::to_string_pretty(&self.config)
-                    .unwrap()
-                    .as_bytes(),
-            )
-            .unwrap();
+        serde_json::to_writer_pretty(&self.fd, &self.config).unwrap();
     }
 }
 impl<'a> Drop for ConfigMut<'a> {

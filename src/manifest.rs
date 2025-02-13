@@ -2,7 +2,10 @@ use serde::Deserialize;
 
 use std::fs::{self};
 
-use crate::LAUNCHER_PATH;
+use crate::{
+    utils::{self, download::DownloadError},
+    LAUNCHER_PATH,
+};
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -44,12 +47,11 @@ impl Manifest {
     }
 
     /// downloads client.json for a given version
-    pub fn download_version(&self, version: &str) -> Result<Option<String>, reqwest::Error> {
+    pub fn download_version(&self, version: &str) -> Result<Option<String>, DownloadError> {
         let Some(version) = self.versions.iter().find(|x| x.id == version) else {
             return Ok(None);
         };
-        let res = reqwest::blocking::get(&version.url)?;
-        let text = res.text()?;
-        Ok(Some(text))
+        let res = utils::download::get(&version.url)?;
+        Ok(Some(String::from_utf8(res).unwrap()))
     }
 }
