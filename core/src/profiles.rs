@@ -1,10 +1,11 @@
 use crate::{
+    client,
     utils::{
         download::DownloadError,
         errors::{ExecutionError, InstallationError},
         MULTI_PATH_SEPRATOR,
     },
-    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH, MANIFEST,
+    version_manifest, ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH,
 };
 use std::{
     borrow::Cow,
@@ -14,10 +15,10 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crab_launcher_api::meta::client::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    client::Client,
     config::{Config, ConfigMut},
     PROFILES_PATH,
 };
@@ -86,8 +87,7 @@ impl Profile {
         let data = match fs::read_to_string(&client_path).ok() {
             Some(data) => data,
             None => {
-                let manifest = &*MANIFEST;
-                let version = manifest.download_version(&self.version)?.unwrap();
+                let version = version_manifest::download_version(&self.version)?.unwrap();
                 fs::write(client_path, &version)?;
                 version
             }
@@ -100,7 +100,7 @@ impl Profile {
         let path = self.dir_path();
         let client = self.read_client()?;
         println!("downloading profile {}", self.name);
-        client.install(&path)
+        client::install_client(client, &path)
     }
 
     fn classpath(&self, client: &Client) -> String {

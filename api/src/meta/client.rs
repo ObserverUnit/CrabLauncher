@@ -1,33 +1,54 @@
-use crate::{
-    utils::{self, download::DownloadError, errors::InstallationError, zip::ZipExtractor},
-    ASSETS_PATH, LIBS_PATH,
-};
-use download::{Download, Downloads};
-use rule::Rule;
+use std::{collections::HashMap, path::PathBuf};
+
 use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-};
 
-use crate::utils::{Arch, OsName};
+use super::utils::{Os, OsName};
 
-pub mod download;
-pub mod rule;
-
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleAction {
+    Allow,
+    Disallow,
+}
 #[derive(Deserialize, Debug, Clone)]
-pub struct Os {
-    pub name: Option<OsName>,
-    pub arch: Option<Arch>,
+pub struct Rule {
+    pub action: RuleAction,
+    pub features: Option<HashMap<String, bool>>,
+    pub os: Option<Os>,
 }
 
-impl Os {
-    /// Returns true if the current platform matches the given [`Os`]
-    pub fn matches(&self) -> bool {
-        (self.name.is_none() || self.name == Some(crate::OS))
-            && (self.arch.is_none() || self.arch == Some(crate::ARCH))
+impl Rule {
+    /// Returns true if the current platform allows the given [`Rule`]
+    /// use [`Rule::is_allowed`] to check if a rule is allowed on a given platform this only checks if the rule matches the current platform isn't impacted by the action
+    fn matches(&self) -> bool {
+        // TODO: match features
+        (self.os.is_none() || self.os.as_ref().is_some_and(|os| os.matches()))
+            && self.features.is_none()
     }
+
+    pub fn is_allowed(&self) -> bool {
+        let is_matched = self.matches();
+        match self.action {
+            RuleAction::Allow => is_matched,
+            RuleAction::Disallow => !is_matched,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Download {
+    #[serde(rename = "path")]
+    pub sub_path: Option<PathBuf>,
+    // TODO: verify sha1 and size
+    // pub sha1: String,
+    // pub size: i32,
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Downloads {
+    pub client: Download,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -176,79 +197,8 @@ pub struct Index {
 }
 
 impl Client {
-    fn download_assets(&self) -> Result<(), DownloadError> {
-        let id = &self.assets;
-        println!("Downloading assets for {}...", id);
-        let indexes_dir = ASSETS_PATH.join("indexes");
-        let indexes_path = indexes_dir.join(format!("{}.json", id));
-        let download = self.asset_index.download_in(&indexes_path)?;
-
-        // downloading objects
-        let index: Index = serde_json::from_slice(&download).unwrap();
-        let objects = index.objects;
-        // each object is a file with a hash as name, in a subdirectory with the first 2 letters of the hash which exists in the assets folder
-        for (_, object) in objects {
-            let dir_name = &object.hash[0..2];
-            let dir = ASSETS_PATH.join("objects").join(dir_name);
-            let path = dir.join(&object.hash);
-
-            if path.exists() {
-                continue;
-            }
-
-            fs::create_dir_all(&dir)?;
-            let data = utils::download::get(&format!(
-                "https://resources.download.minecraft.net/{dir_name}/{}",
-                object.hash
-            ))?;
-
-            fs::write(path, data)?;
-        }
-        println!("Downloaded assets for {}", id);
-        Ok(())
-    }
-
+    /// returns an iterator of all libraries that are required by the current platform
     pub fn libs(&self) -> impl Iterator<Item = &Library> {
         self.libraries.iter().filter(|l| l.is_allowed())
-    }
-
-    /// installs the libraries required by current client and uses the given path as the base
-    /// profile directory
-    pub fn install_libs(&self, path: &Path) -> Result<(), InstallationError> {
-        println!("Downloading libraries...");
-        for lib in self.libs() {
-            // downloading lib
-            if let Some(ref artifact) = lib.downloads.artifact {
-                artifact.download_in(&*LIBS_PATH)?;
-            }
-            // downloading natives required by lib
-            if let Some(native) = lib.platform_native() {
-                let bytes = native.download_in(&*LIBS_PATH)?;
-
-                if let Some(ref extract_rules) = lib.extract {
-                    let natives_dir = path.join(".natives");
-
-                    let exclude = extract_rules.exclude.as_deref().unwrap_or_default();
-                    let paths = exclude.iter().map(PathBuf::as_path).collect::<Vec<_>>();
-                    let zip = ZipExtractor::new(&bytes).exclude(&paths);
-
-                    zip.extract(&natives_dir)?;
-                }
-            }
-        }
-
-        println!("Done downloading libraries");
-        Ok(())
-    }
-
-    pub fn install(self, path: &Path) -> Result<(), InstallationError> {
-        self.download_assets()?;
-        self.install_libs(path)?;
-        println!("Downloading client...");
-        let client_path = path.join("client.jar");
-        // downloading client.jar
-        self.downloads.client.download_in(&client_path)?;
-        println!("Done downloading client");
-        Ok(())
     }
 }

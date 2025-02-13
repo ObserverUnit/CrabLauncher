@@ -1,6 +1,6 @@
 use crate::profiles::{Profile, Profiles};
 use crate::utils::errors::ExecutionError;
-use crate::MANIFEST;
+use crate::version_manifest;
 
 #[derive(Debug)]
 pub struct Env {
@@ -29,10 +29,7 @@ impl Env {
     }
 
     pub fn add(&mut self, name: &str, version: &str) -> Result<(), ()> {
-        let manifest = &*MANIFEST;
-        if manifest
-            .versions
-            .iter()
+        if version_manifest::versions()
             .find(|v| &v.id == version)
             .is_none()
         {

@@ -1,8 +1,4 @@
-use std::{
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
 
 use regex::Regex;
 use rust_search::SearchBuilder;
@@ -23,20 +19,20 @@ pub fn find() -> Vec<String> {
             .search_input("java")
             .strict()
             .build()
-            .map(|x| Path::new(&x).to_path_buf())
+            .map(PathBuf::from)
             .collect();
 
         paths
             .iter()
             .filter(|x| {
                 x.is_file()
-                    && x.metadata().unwrap().permissions().mode() & 0o111 != 0 // check if an exe
-                    && x.file_name().unwrap_or_default() == "java"
-            }) // search has some problems so i had to do this here
+                    && x.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0) // check if an exe
+                    && x.file_name().is_some_and(|n| n == "java")
+            })
             .map(|x| x.to_str().unwrap().to_string())
             .collect()
     } else {
-        todo!()
+        todo!("finding java for {:?} is not yet implemented", OS)
     }
 }
 

@@ -6,12 +6,11 @@ use utils::{Arch, OsName};
 mod client;
 mod config;
 mod java;
-mod manifest;
+mod version_manifest;
 
 pub mod env;
 pub mod profiles;
 pub mod utils;
-use manifest::Manifest;
 
 pub const OS: OsName = if cfg!(target_os = "windows") {
     OsName::Windows
@@ -34,8 +33,6 @@ pub const ARCH: Arch = if cfg!(target_arch = "x86") {
 };
 
 lazy_static! {
-    // Global Manifest
-    static ref MANIFEST: Manifest = Manifest::get();
     // Paths
     pub static ref LAUNCHER_PATH: &'static Path = &Path::new("launcher");
     pub static ref LIBS_PATH: PathBuf = LAUNCHER_PATH.join("libs");

@@ -311,9 +311,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crab-launcher-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "crab-launcher-core"
 version = "0.1.0"
 dependencies = [
+ "crab-launcher-api",
  "lazy_static",
  "regex",
  "reqwest",
