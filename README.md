@@ -16,12 +16,12 @@ cargo run -- run [profile name]
 by default it chooses the highest existing version of java,
 if you want to run an old profile like 1.6.4 for example you first have to edit the java path used by this profile
 ```
-cargo run -- edit [profile name] [java path]
+cargo run -- edit [profile name] current_java_path [java path]
 ```
 e.g
 ```
 cargo run -- new old 1.6.4
-cargo run -- edit old /usr/lib/jvm/java-8-openjdk-amd64/jre
+cargo run -- edit old current_java_path /usr/lib/jvm/java-8-openjdk-amd64/jre
 cargo run -- run old
 ```
 
