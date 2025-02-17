@@ -3,31 +3,41 @@ use velcro::hash_map_from;
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom};
+use std::io::{BufReader, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use crate::java::{self};
-use crate::LAUNCHER_PATH;
+use crate::{java, LAUNCHER_PATH};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config(HashMap<String, String>);
 
-impl Default for Config {
-    fn default() -> Self {
-        let java_list = java::list();
-        Self(hash_map_from! {
+impl Config {
+    fn create_default() -> Result<Self, std::io::Error> {
+        let java_list = java::java_manager()
+            .latest()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No Java found",
+            ))?
+            .clone();
+
+        Ok(Self(hash_map_from! {
             "min_ram": "512",
             "max_ram": "2048",
             "auth_player_name": "dev",
             "auth_access_token": "0",
-            "current_java_path": &java_list[0].path,
-        })
+            "current_java_path": java_list.path,
+        }))
     }
 }
 
 impl Config {
+    pub fn new(map: HashMap<String, String>) -> Self {
+        Self(map)
+    }
+
     pub fn empty() -> Self {
         Self(HashMap::new())
     }
@@ -36,23 +46,21 @@ impl Config {
     }
 
     /// Reads the global config and returns a memory read-only copy of it
-    pub fn read_global() -> Self {
+    pub fn read_global() -> Result<Self, std::io::Error> {
         let path = Self::global_config_path();
 
         let config = if !path.exists() {
-            let config = Self::default();
-            let file = File::create(path).unwrap();
-
-            let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &config).unwrap();
+            let config = Self::create_default()?;
+            let file = File::create(path)?;
+            serde_json::to_writer_pretty(file, &config).unwrap();
             config
         } else {
-            let file = File::open(path).unwrap();
+            let file = File::open(path)?;
             let reader = BufReader::new(file);
             serde_json::from_reader(reader).unwrap()
         };
 
-        config
+        Ok(config)
     }
 
     pub fn get(&self, entry: &str) -> Option<&str> {

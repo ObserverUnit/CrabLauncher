@@ -120,12 +120,12 @@ impl Arguments {
     }
 }
 
-// #[derive(Debug, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub struct JavaVersion {
-//     pub component: String,
-//     pub major_version: u16,
-// }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaVersion {
+    pub component: String,
+    pub major_version: u16,
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct LibraryDownload {
@@ -178,7 +178,7 @@ pub struct Client {
     pub assets: String,
     pub downloads: Downloads,
 
-    /*     pub java_version: Option<JavaVersion>, */
+    pub java_version: Option<JavaVersion>,
     pub libraries: Vec<Library>,
     pub main_class: String,
 }

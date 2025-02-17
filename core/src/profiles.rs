@@ -1,10 +1,7 @@
 use crate::{
     client,
-    utils::{
-        download::DownloadError,
-        errors::{ExecutionError, InstallationError},
-        MULTI_PATH_SEPRATOR,
-    },
+    java::{self},
+    utils::{errors::CoreError, MULTI_PATH_SEPRATOR},
     version_manifest, ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH,
 };
 use std::{
@@ -17,6 +14,7 @@ use std::{
 
 use crab_launcher_api::meta::client::Client;
 use serde::{Deserialize, Serialize};
+use velcro::hash_map_from;
 
 use crate::{
     config::{Config, ConfigMut},
@@ -30,8 +28,30 @@ pub struct Profile {
 }
 
 impl Profile {
-    pub fn new(name: String, version: String) -> Self {
-        Self { name, version }
+    pub fn create(name: String, version: String) -> Result<Self, CoreError<'static>> {
+        let mut this = Self { name, version };
+        let client_raw = version_manifest::download_version(this.version())?;
+        let client: Client =
+            serde_json::from_slice(&client_raw).expect("failed to deserialize client.json");
+
+        if let Some(ver) = client.java_version {
+            let manager = java::java_manager();
+            let best_java = manager
+                .list()
+                .iter()
+                .find(|j| j.version.major as u16 == ver.major_version);
+
+            if let Some(java) = best_java {
+                let config = Config::new(hash_map_from! {
+                    "current_java_path": &java.path,
+                });
+
+                this.override_config(config)?;
+            }
+        }
+
+        fs::write(this.client_json_path(), &client_raw)?;
+        Ok(this)
     }
 
     fn dir_path(&self) -> PathBuf {
@@ -44,6 +64,10 @@ impl Profile {
 
     fn client_jar_path(&self) -> PathBuf {
         self.dir_path().join("client.jar")
+    }
+
+    fn client_json_path(&self) -> PathBuf {
+        self.dir_path().join("client.json")
     }
 
     pub fn name(&self) -> &str {
@@ -61,13 +85,21 @@ impl Profile {
         Some(serde_json::from_str(&config).expect("failed to deserialize config.json"))
     }
 
+    fn override_config(&mut self, config: Config) -> Result<(), std::io::Error> {
+        let profile_dir = self.dir_path();
+        let config_path = self.config_path();
+        fs::create_dir_all(&profile_dir)?;
+        fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+        Ok(())
+    }
+
     /// returns the config used by this profile, and merges it with the global config
-    pub fn get_config(&self) -> Config {
-        let global_config = Config::read_global();
+    pub fn get_config(&self) -> Result<Config, std::io::Error> {
+        let global_config = Config::read_global()?;
         if let Some(config) = self.read_config() {
-            config.merge(global_config)
+            Ok(config.merge(global_config))
         } else {
-            global_config
+            Ok(global_config)
         }
     }
 
@@ -79,24 +111,24 @@ impl Profile {
             .into_mut(&config_path)
     }
 
-    pub fn read_client(&self) -> Result<Client, DownloadError> {
+    pub fn read_client(&self) -> Result<Client, CoreError<'static>> {
         let dir_path = self.dir_path();
         let client_path = dir_path.join("client.json");
         fs::create_dir_all(dir_path)?;
 
         let data = match fs::read_to_string(&client_path).ok() {
-            Some(data) => data,
+            Some(data) => data.into_bytes(),
             None => {
-                let version = version_manifest::download_version(&self.version)?.unwrap();
+                let version = version_manifest::download_version(&self.version)?;
                 fs::write(client_path, &version)?;
                 version
             }
         };
 
-        Ok(serde_json::from_str(&data).expect("failed to deserialize client.json"))
+        Ok(serde_json::from_slice(&data).expect("failed to deserialize client.json"))
     }
 
-    pub fn install(&self) -> Result<(), InstallationError> {
+    pub fn install(&self) -> Result<(), CoreError<'static>> {
         let path = self.dir_path();
         let client = self.read_client()?;
         println!("downloading profile {}", self.name);
@@ -127,8 +159,8 @@ impl Profile {
 
     /// generates the java arguments required to launch this profile
     /// NOTE: may panic if [`Self::install`] was not successfully executed first (assumes that the client.json file exists)
-    fn generate_arguments(&self, config: &Config) -> Vec<String> {
-        let client = self.read_client().unwrap();
+    fn generate_arguments(&self, config: &Config) -> Result<Vec<String>, CoreError<'static>> {
+        let client = self.read_client()?;
         let classpath = self.classpath(&client);
         let game_dir = self.dir_path();
         let natives_dir = game_dir.join(".natives");
@@ -146,6 +178,7 @@ impl Profile {
                 "version_name" => self.version(),
                 "classpath" => classpath.as_str(),
                 "natives_directory" => natives_dir.to_str().unwrap(),
+                "auth_uuid" => "e371151a-b6b4-496a-b446-0abcd3e75ec4",
                 _ => config.get(arg)?,
             })
         };
@@ -167,16 +200,16 @@ impl Profile {
         fmt_args(&mut jvm_args);
 
         jvm_args.push(client.main_class.clone());
-        [jvm_args, game_args].concat()
+        Ok([jvm_args, game_args].concat())
     }
 
-    pub fn execute(&self) -> Result<(), ExecutionError<'static>> {
-        let config = self.get_config();
+    pub fn execute(&self) -> Result<(), CoreError<'static>> {
+        let config = self.get_config()?;
         let current_java_path = config.get("current_java_path").unwrap();
         let max_ram = config.get("max_ram").unwrap();
         let min_ram = config.get("min_ram").unwrap();
 
-        let args = self.generate_arguments(&config);
+        let args = self.generate_arguments(&config)?;
 
         dbg!("executing with args: {:?}", &args);
         // TODO: make use of client.arguments
@@ -190,9 +223,7 @@ impl Profile {
             .output()?;
 
         if !output.status.success() {
-            return Err(ExecutionError::MinecraftError(
-                output.status.code().unwrap(),
-            ));
+            return Err(CoreError::MinecraftFailure(output.status.code().unwrap()));
         }
 
         Ok(())

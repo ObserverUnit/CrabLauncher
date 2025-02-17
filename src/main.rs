@@ -1,10 +1,9 @@
 mod cli;
 use clap::Parser;
 use cli::Cli;
-use crab_launcher_core::{env::Env, utils::errors::ExecutionError};
+use crab_launcher_core::{env::Env, utils::errors::CoreError};
 fn main() {
     let parse = Cli::try_parse().unwrap_or_else(|e| e.exit());
-    // TODO: move everything to a separate crate and only keep the main function
     let mut env = Env::new();
 
     match parse.command {
@@ -19,18 +18,23 @@ fn main() {
         cli::Commands::Run { name } => match env.execute(&name) {
             Ok(_) => println!("Minecraft exited successfully"),
             Err(err) => match err {
-                ExecutionError::MinecraftError(exit_code) => {
+                CoreError::MinecraftFailure(exit_code) => {
                     eprintln!("Minecraft exited with code {}", exit_code);
                 }
-                ExecutionError::IoError(err) => {
+                CoreError::IoError(err) => {
                     eprintln!("IO error: {}", err);
                 }
-                ExecutionError::ProfileDoesntExist(name) => {
-                    eprintln!("profile {} not found", name);
+
+                CoreError::ZipError(err) => {
+                    eprintln!("Failed unzipping: {}", err);
                 }
-                ExecutionError::InstallationError(err) => {
-                    eprintln!("installation error: {:?}", err);
+                CoreError::ProfileNotFound(name) => {
+                    eprintln!("Profile `{}` not found", name);
                 }
+                CoreError::DownloadError(err) => {
+                    eprintln!("Download error: {:?}", err);
+                }
+                CoreError::MinecraftVersionNotFound => unreachable!(),
             },
         },
         cli::Commands::List => {

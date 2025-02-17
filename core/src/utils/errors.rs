@@ -1,49 +1,30 @@
 use std::io;
 
-use super::download;
+use super::download::DownloadError;
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub enum InstallationError {
+pub enum CoreError<'a> {
     ZipError(zip::result::ZipError),
-    DownloadError(download::DownloadError),
+    DownloadError(DownloadError),
     IoError(io::Error),
+    MinecraftVersionNotFound,
+    ProfileNotFound(&'a str),
+    MinecraftFailure(i32),
 }
 
-impl From<zip::result::ZipError> for InstallationError {
-    fn from(err: zip::result::ZipError) -> Self {
-        InstallationError::ZipError(err)
-    }
-}
-impl From<download::DownloadError> for InstallationError {
-    fn from(err: download::DownloadError) -> Self {
-        InstallationError::DownloadError(err)
-    }
-}
-
-impl From<io::Error> for InstallationError {
-    fn from(err: io::Error) -> Self {
-        InstallationError::IoError(err)
+impl From<DownloadError> for CoreError<'static> {
+    fn from(value: DownloadError) -> Self {
+        Self::DownloadError(value)
     }
 }
 
-#[derive(Debug)]
-pub enum ExecutionError<'a> {
-    InstallationError(InstallationError),
-    ProfileDoesntExist(&'a str),
-    /// an error while executing Minecraft, contains the exit code of the process
-    MinecraftError(i32),
-    IoError(io::Error),
-}
-
-impl<'a> From<InstallationError> for ExecutionError<'a> {
-    fn from(err: InstallationError) -> Self {
-        ExecutionError::InstallationError(err)
+impl From<std::io::Error> for CoreError<'static> {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
     }
 }
-
-impl<'a> From<io::Error> for ExecutionError<'a> {
-    fn from(err: io::Error) -> Self {
-        ExecutionError::IoError(err)
+impl From<zip::result::ZipError> for CoreError<'static> {
+    fn from(value: zip::result::ZipError) -> Self {
+        Self::ZipError(value)
     }
 }

@@ -1,7 +1,7 @@
 use crab_launcher_api::meta::client::{Client, Download, Index};
 
 use crate::{
-    utils::{self, download::DownloadError, errors::InstallationError, zip::ZipExtractor},
+    utils::{self, download::DownloadError, errors::CoreError, zip::ZipExtractor},
     ASSETS_PATH, LIBS_PATH,
 };
 use std::{
@@ -67,7 +67,7 @@ fn download_assets(client: &Client) -> Result<(), DownloadError> {
 
 /// installs the libraries required by current client and uses the given path as the base
 /// profile directory
-fn install_libs(client: &Client, path: &Path) -> Result<(), InstallationError> {
+fn install_libs(client: &Client, path: &Path) -> Result<(), CoreError<'static>> {
     println!("Downloading libraries...");
     for lib in client.libs() {
         // downloading lib
@@ -95,7 +95,7 @@ fn install_libs(client: &Client, path: &Path) -> Result<(), InstallationError> {
 }
 
 /// Installs the given client into the given path, downloading all the required assets and libraries
-pub fn install_client(client: Client, path: &Path) -> Result<(), InstallationError> {
+pub fn install_client(client: Client, path: &Path) -> Result<(), CoreError<'static>> {
     download_assets(&client)?;
     install_libs(&client, path)?;
     println!("Downloading client...");

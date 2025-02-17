@@ -4,7 +4,7 @@ use crab_launcher_api::meta::manifest::{Version, VersionManifest};
 use lazy_static::lazy_static;
 
 use crate::{
-    utils::{self, download::DownloadError},
+    utils::{self, errors::CoreError},
     LAUNCHER_PATH,
 };
 
@@ -35,10 +35,10 @@ pub fn versions() -> impl Iterator<Item = &'static Version> {
     MANIFEST.versions.iter()
 }
 /// downloads client.json for a given minecraft version and the client.json contents as a string
-pub fn download_version(version: &str) -> Result<Option<String>, DownloadError> {
+pub fn download_version(version: &str) -> Result<Vec<u8>, CoreError<'static>> {
     let Some(version) = versions().find(|x| x.id == version) else {
-        return Ok(None);
+        return Err(CoreError::MinecraftVersionNotFound);
     };
     let res = utils::download::get(&version.url)?;
-    Ok(Some(String::from_utf8(res).unwrap()))
+    Ok(res)
 }

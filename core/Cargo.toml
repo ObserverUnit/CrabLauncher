@@ -14,3 +14,4 @@ regex = "1.10.5"
 lazy_static = "1.5.0"
 velcro = "0.5.4"
 crab-launcher-api = { path = "../api" }
+semver = "1.0.25"

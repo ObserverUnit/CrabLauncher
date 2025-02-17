@@ -1,5 +1,3 @@
-use std::io::{self};
-
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum DownloadError {
@@ -7,7 +5,7 @@ pub enum DownloadError {
     Timeout,
     Other(reqwest::Error),
     Status(reqwest::StatusCode),
-    IoError(io::Error),
+    Io(std::io::Error),
 }
 
 impl From<reqwest::Error> for DownloadError {
@@ -24,9 +22,9 @@ impl From<reqwest::Error> for DownloadError {
     }
 }
 
-impl From<io::Error> for DownloadError {
-    fn from(err: io::Error) -> Self {
-        DownloadError::IoError(err)
+impl From<std::io::Error> for DownloadError {
+    fn from(value: std::io::Error) -> Self {
+        DownloadError::Io(value)
     }
 }
 
