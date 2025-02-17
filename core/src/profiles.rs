@@ -49,7 +49,7 @@ impl Profile {
                 this.override_config(config)?;
             }
         }
-
+        fs::create_dir_all(this.dir_path())?;
         fs::write(this.client_json_path(), &client_raw)?;
         Ok(this)
     }
