@@ -2,7 +2,8 @@ use crate::{
     client,
     java::{self},
     utils::{errors::CoreError, MULTI_PATH_SEPRATOR},
-    version_manifest, ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH,
+    version_manifest::Manifest,
+    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH,
 };
 use std::{
     borrow::Cow,
@@ -12,6 +13,7 @@ use std::{
     process::{Command, Stdio},
 };
 
+use bytes::Buf;
 use crab_launcher_api::meta::client::Client;
 use serde::{Deserialize, Serialize};
 use velcro::hash_map_from;
@@ -28,9 +30,13 @@ pub struct Profile {
 }
 
 impl Profile {
-    pub fn create(name: String, version: String) -> Result<Self, CoreError<'static>> {
+    pub async fn create(
+        manifest: &Manifest,
+        name: String,
+        version: String,
+    ) -> Result<Self, CoreError<'static>> {
         let mut this = Self { name, version };
-        let client_raw = version_manifest::download_version(this.version())?;
+        let client_raw = manifest.download_version(this.version()).await?;
         let client: Client =
             serde_json::from_slice(&client_raw).expect("failed to deserialize client.json");
 
@@ -111,28 +117,39 @@ impl Profile {
             .into_mut(&config_path)
     }
 
-    pub fn read_client(&self) -> Result<Client, CoreError<'static>> {
+    pub async fn read_or_create_client(
+        &self,
+        manifest: &Manifest,
+    ) -> Result<Client, CoreError<'static>> {
         let dir_path = self.dir_path();
         let client_path = dir_path.join("client.json");
         fs::create_dir_all(dir_path)?;
 
         let data = match fs::read_to_string(&client_path).ok() {
-            Some(data) => data.into_bytes(),
+            Some(data) => serde_json::from_str(&data),
             None => {
-                let version = version_manifest::download_version(&self.version)?;
+                let version = manifest.download_version(&self.version).await?;
                 fs::write(client_path, &version)?;
-                version
+                serde_json::from_reader(version.reader())
             }
         };
 
-        Ok(serde_json::from_slice(&data).expect("failed to deserialize client.json"))
+        Ok(data.expect("failed to deserialize client.json"))
     }
 
-    pub fn install(&self) -> Result<(), CoreError<'static>> {
+    pub fn read_client(&self) -> Option<Client> {
+        let dir_path = self.dir_path();
+        let client_path = dir_path.join("client.json");
+        // TODO: replace with a File reader instead of a string
+        let data = fs::read_to_string(&client_path).ok()?;
+        serde_json::from_str(&data).expect("failed to deserialize client.json")
+    }
+
+    pub async fn install(&self, manifest: &Manifest) -> Result<(), CoreError<'static>> {
         let path = self.dir_path();
-        let client = self.read_client()?;
+        let client = self.read_or_create_client(manifest).await?;
         println!("downloading profile {}", self.name);
-        client::install_client(client, &path)
+        client::install_client(client, &path).await
     }
 
     fn classpath(&self, client: &Client) -> String {
@@ -160,7 +177,7 @@ impl Profile {
     /// generates the java arguments required to launch this profile
     /// NOTE: may panic if [`Self::install`] was not successfully executed first (assumes that the client.json file exists)
     fn generate_arguments(&self, config: &Config) -> Result<Vec<String>, CoreError<'static>> {
-        let client = self.read_client()?;
+        let client = self.read_client().expect("failed to read client.json, Self::generate_arguments must be called after Self::install");
         let classpath = self.classpath(&client);
         let game_dir = self.dir_path();
         let natives_dir = game_dir.join(".natives");
@@ -246,6 +263,9 @@ impl Profiles {
     }
 
     pub fn fetch() -> Self {
+        if let Some(parent) = Self::path().parent() {
+            fs::create_dir_all(parent).expect("failed creating parents of profiles.json");
+        }
         let fd = OpenOptions::new()
             .read(true)
             .append(true)

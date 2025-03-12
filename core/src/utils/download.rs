@@ -1,3 +1,4 @@
+use bytes::Bytes;
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum DownloadError {
@@ -28,14 +29,13 @@ impl From<std::io::Error> for DownloadError {
     }
 }
 
-// TODO: make this async
 /// Downloads a file from a given url and returns it as a byte vector
-pub fn get(url: &str) -> Result<Vec<u8>, DownloadError> {
-    let response = reqwest::blocking::get(url)?;
+pub async fn get(url: &str) -> Result<Bytes, DownloadError> {
+    let response = reqwest::get(url).await?;
     if !response.status().is_success() {
         return Err(DownloadError::Status(response.status()));
     }
     // TODO: return Bytes instead of Vec<u8>
-    let bytes = response.bytes()?;
-    Ok(bytes.to_vec())
+    let bytes = response.bytes().await?;
+    Ok(bytes)
 }

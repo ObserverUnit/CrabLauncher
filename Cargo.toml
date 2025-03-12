@@ -9,3 +9,4 @@ members = ["core", "api"]
 [dependencies]
 clap = { version = "4.5.7", features = ["derive"] }
 crab-launcher-core = { path = "core" }
+tokio = { version = "1.44.0", features = ["rt", "macros"] }
