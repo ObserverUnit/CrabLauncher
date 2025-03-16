@@ -1,16 +1,16 @@
-use std::fs::{self};
+use std::{
+    fs::{self},
+    path::Path,
+};
 
 use bytes::Bytes;
 use crab_launcher_api::meta::manifest::{Version, VersionManifest};
 
-use crate::{
-    utils::{self, errors::CoreError},
-    LAUNCHER_PATH,
-};
+use crate::utils::{self, errors::CoreError};
 
 /// parses the global version manifest
-async fn fetch_global_manifest() -> VersionManifest {
-    let path = LAUNCHER_PATH.join("version_manifest.json");
+async fn fetch_global_manifest(launcher_root: &Path) -> VersionManifest {
+    let path = launcher_root.join("version_manifest.json");
     // download version info
     let res =
         utils::download::get("https://launchermeta.mojang.com/mc/game/version_manifest.json").await;
@@ -32,8 +32,8 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub async fn fetch() -> Self {
-        let inner = fetch_global_manifest().await;
+    pub async fn fetch(launcher_root: &Path) -> Self {
+        let inner = fetch_global_manifest(launcher_root).await;
         Self { inner }
     }
 

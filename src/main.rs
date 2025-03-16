@@ -1,11 +1,14 @@
 mod cli;
+use std::path::Path;
+
 use clap::Parser;
 use cli::Cli;
 use crab_launcher_core::{env::Env, utils::errors::CoreError};
 #[tokio::main]
 async fn main() {
     let parse = Cli::try_parse().unwrap_or_else(|e| e.exit());
-    let mut env = Env::fetch_new().await;
+    let launcher_root = Path::new("launcher");
+    let mut env = Env::fetch_new(launcher_root).await;
 
     match parse.command {
         cli::Commands::New(new) => env

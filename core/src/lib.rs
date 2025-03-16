@@ -1,6 +1,3 @@
-use std::path::{Path, PathBuf};
-
-use lazy_static::lazy_static;
 use utils::{Arch, OsName};
 
 mod client;
@@ -31,11 +28,3 @@ pub const ARCH: Arch = if cfg!(target_arch = "x86") {
 } else {
     panic!("unsupported arch")
 };
-
-lazy_static! {
-    // Paths
-    pub static ref LAUNCHER_PATH: &'static Path = &Path::new("launcher");
-    pub static ref LIBS_PATH: PathBuf = LAUNCHER_PATH.join("libs");
-    pub static ref ASSETS_PATH: PathBuf = LAUNCHER_PATH.join("assets");
-    pub static ref PROFILES_PATH: PathBuf = LAUNCHER_PATH.join("profiles");
-}

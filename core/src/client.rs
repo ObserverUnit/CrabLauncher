@@ -2,10 +2,7 @@ use bytes::Bytes;
 use crab_launcher_api::meta::client::{Client, Download, Index};
 use futures::{stream::FuturesUnordered, StreamExt};
 
-use crate::{
-    utils::{self, download::DownloadError, errors::CoreError, zip::ZipExtractor},
-    ASSETS_PATH, LIBS_PATH,
-};
+use crate::utils::{self, download::DownloadError, errors::CoreError, zip::ZipExtractor};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -60,10 +57,10 @@ where
     outputs
 }
 
-async fn download_assets(client: &Client) -> Result<(), DownloadError> {
+async fn download_assets(assets_root: &Path, client: &Client) -> Result<(), DownloadError> {
     let id = &client.assets;
     println!("Downloading assets for {}...", id);
-    let indexes_dir = ASSETS_PATH.join("indexes");
+    let indexes_dir = assets_root.join("indexes");
     let indexes_path = indexes_dir.join(format!("{}.json", id));
     let download = download_in(&client.asset_index, &indexes_path).await?;
 
@@ -75,7 +72,7 @@ async fn download_assets(client: &Client) -> Result<(), DownloadError> {
     let download_object =
         async |object: crab_launcher_api::meta::client::Object| -> Result<(), DownloadError> {
             let dir_name = &object.hash[0..2];
-            let dir = ASSETS_PATH.join("objects").join(dir_name);
+            let dir = assets_root.join("objects").join(dir_name);
             let path = dir.join(&object.hash);
 
             if path.exists() {
@@ -109,17 +106,21 @@ async fn download_assets(client: &Client) -> Result<(), DownloadError> {
 
 /// installs the libraries required by current client and uses the given path as the base
 /// profile directory
-async fn install_libs(client: &Client, path: &Path) -> Result<(), CoreError<'static>> {
+async fn install_libs(
+    libs_root: &Path,
+    client: &Client,
+    path: &Path,
+) -> Result<(), CoreError<'static>> {
     println!("Downloading libraries...");
     let download_lib =
         async |lib: &crab_launcher_api::meta::client::Library| -> Result<(), CoreError<'static>> {
             // downloading lib
             if let Some(ref artifact) = lib.downloads.artifact {
-                download_in(artifact, &*LIBS_PATH).await?;
+                download_in(artifact, libs_root).await?;
             }
             // downloading natives required by lib
             if let Some(native) = lib.platform_native() {
-                let bytes = download_in(native, &*LIBS_PATH).await?;
+                let bytes = download_in(native, libs_root).await?;
 
                 if let Some(ref extract_rules) = lib.extract {
                     let natives_dir = path.join(".natives");
@@ -147,9 +148,14 @@ async fn install_libs(client: &Client, path: &Path) -> Result<(), CoreError<'sta
 }
 
 /// Installs the given client into the given path, downloading all the required assets and libraries
-pub async fn install_client(client: Client, path: &Path) -> Result<(), CoreError<'static>> {
-    download_assets(&client).await?;
-    install_libs(&client, path).await?;
+pub async fn install_client(
+    assets_root: &Path,
+    libs_root: &Path,
+    client: Client,
+    path: &Path,
+) -> Result<(), CoreError<'static>> {
+    download_assets(assets_root, &client).await?;
+    install_libs(libs_root, &client, path).await?;
     println!("Downloading client...");
     let client_path = path.join("client.jar");
     // downloading client.jar

@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
-use crate::{java, LAUNCHER_PATH};
+use crate::java;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config(HashMap<String, String>);
@@ -41,13 +41,14 @@ impl Config {
     pub fn empty() -> Self {
         Self(HashMap::new())
     }
-    fn global_config_path() -> PathBuf {
-        LAUNCHER_PATH.join("config.json")
+
+    fn global_config_path(launcher_root: &Path) -> PathBuf {
+        launcher_root.join("config.json")
     }
 
     /// Reads the global config and returns a memory read-only copy of it
-    pub fn read_global() -> Result<Self, std::io::Error> {
-        let path = Self::global_config_path();
+    pub fn read_global(launcher_root: &Path) -> Result<Self, std::io::Error> {
+        let path = Self::global_config_path(launcher_root);
 
         let config = if !path.exists() {
             let config = Self::create_default()?;

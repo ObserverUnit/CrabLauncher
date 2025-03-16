@@ -3,44 +3,89 @@ use crate::{
     java::{self},
     utils::{errors::CoreError, MULTI_PATH_SEPRATOR},
     version_manifest::Manifest,
-    ASSETS_PATH, LAUNCHER_PATH, LIBS_PATH,
 };
 use std::{
     borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{BufReader, Seek, SeekFrom},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
-use bytes::Buf;
 use crab_launcher_api::meta::client::Client;
 use serde::{Deserialize, Serialize};
 use velcro::hash_map_from;
 
-use crate::{
-    config::{Config, ConfigMut},
-    PROFILES_PATH,
-};
+use crate::config::{Config, ConfigMut};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Profile {
+pub struct ProfileMetadata {
     name: String,
     version: String,
 }
 
-impl Profile {
-    pub async fn create(
-        manifest: &Manifest,
-        name: String,
-        version: String,
-    ) -> Result<Self, CoreError<'static>> {
-        let mut this = Self { name, version };
-        let client_raw = manifest.download_version(this.version()).await?;
+impl ProfileMetadata {
+    pub fn new(name: String, version: String) -> Self {
+        Self { name, version }
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Profile<'a> {
+    metadata: ProfileMetadata,
+    libs_root: &'a Path,
+    assets_root: &'a Path,
+    launcher_root: &'a Path,
+    root: PathBuf,
+    client_json_path: PathBuf,
+    client_path: PathBuf,
+    config_path: PathBuf,
+}
+
+impl<'a> Profile<'a> {
+    // Creates a new InMemory profile from on disk metadata and a given path to the profile's root directory
+    pub fn new(
+        metadata: ProfileMetadata,
+        launcher_root: &'a Path,
+        profiles_root: &'a Path,
+        libs_root: &'a Path,
+        assets_root: &'a Path,
+    ) -> Self {
+        let root = profiles_root.join(metadata.name());
+        Self {
+            metadata,
+            client_json_path: root.join("client.json"),
+            config_path: root.join("config.json"),
+            client_path: root.join("client.jar"),
+            launcher_root,
+            libs_root,
+            assets_root,
+            root,
+        }
+    }
+
+    /// Initializes the Profile if it isn't already
+    pub async fn init(&mut self, manifest: &Manifest) -> Result<Client, CoreError<'static>> {
+        match self.read_client() {
+            Some(client) => Ok(client),
+            None => self.reinit(manifest).await,
+        }
+    }
+
+    async fn reinit(&mut self, manifest: &Manifest) -> Result<Client, CoreError<'static>> {
+        let client_raw = manifest.download_version(self.metadata.version()).await?;
         let client: Client =
             serde_json::from_slice(&client_raw).expect("failed to deserialize client.json");
 
-        if let Some(ver) = client.java_version {
+        if let Some(ver) = &client.java_version {
             let manager = java::java_manager();
             let best_java = manager
                 .list()
@@ -52,36 +97,28 @@ impl Profile {
                     "current_java_path": &java.path,
                 });
 
-                this.override_config(config)?;
+                self.override_config(config)?;
             }
         }
-        fs::create_dir_all(this.dir_path())?;
-        fs::write(this.client_json_path(), &client_raw)?;
-        Ok(this)
+        fs::create_dir_all(self.dir_path())?;
+        fs::write(self.client_json_path(), &client_raw)?;
+        Ok(client)
     }
 
-    fn dir_path(&self) -> PathBuf {
-        PROFILES_PATH.join(self.name.as_str())
+    fn dir_path(&self) -> &Path {
+        &self.root
     }
 
-    fn config_path(&self) -> PathBuf {
-        self.dir_path().join("config.json")
+    fn config_path(&self) -> &Path {
+        &self.config_path
     }
 
-    fn client_jar_path(&self) -> PathBuf {
-        self.dir_path().join("client.jar")
+    fn client_jar_path(&self) -> &Path {
+        &self.client_path
     }
 
-    fn client_json_path(&self) -> PathBuf {
-        self.dir_path().join("client.json")
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn version(&self) -> &str {
-        &self.version
+    fn client_json_path(&self) -> &Path {
+        &self.client_json_path
     }
 
     /// attempts to read the config.json file for this profile
@@ -101,7 +138,7 @@ impl Profile {
 
     /// returns the config used by this profile, and merges it with the global config
     pub fn get_config(&self) -> Result<Config, std::io::Error> {
-        let global_config = Config::read_global()?;
+        let global_config = Config::read_global(self.launcher_root)?;
         if let Some(config) = self.read_config() {
             Ok(config.merge(global_config))
         } else {
@@ -117,39 +154,16 @@ impl Profile {
             .into_mut(&config_path)
     }
 
-    pub async fn read_or_create_client(
-        &self,
-        manifest: &Manifest,
-    ) -> Result<Client, CoreError<'static>> {
-        let dir_path = self.dir_path();
-        let client_path = dir_path.join("client.json");
-        fs::create_dir_all(dir_path)?;
-
-        let data = match fs::read_to_string(&client_path).ok() {
-            Some(data) => serde_json::from_str(&data),
-            None => {
-                let version = manifest.download_version(&self.version).await?;
-                fs::write(client_path, &version)?;
-                serde_json::from_reader(version.reader())
-            }
-        };
-
-        Ok(data.expect("failed to deserialize client.json"))
-    }
-
     pub fn read_client(&self) -> Option<Client> {
-        let dir_path = self.dir_path();
-        let client_path = dir_path.join("client.json");
         // TODO: replace with a File reader instead of a string
-        let data = fs::read_to_string(&client_path).ok()?;
+        let data = fs::read_to_string(self.client_json_path()).ok()?;
         serde_json::from_str(&data).expect("failed to deserialize client.json")
     }
 
-    pub async fn install(&self, manifest: &Manifest) -> Result<(), CoreError<'static>> {
-        let path = self.dir_path();
-        let client = self.read_or_create_client(manifest).await?;
-        println!("downloading profile {}", self.name);
-        client::install_client(client, &path).await
+    pub async fn install(&mut self, manifest: &Manifest) -> Result<(), CoreError<'static>> {
+        let client = self.init(manifest).await?;
+        println!("Downloading profile {}", self.metadata.name());
+        client::install_client(self.assets_root, self.libs_root, client, self.dir_path()).await
     }
 
     fn classpath(&self, client: &Client) -> String {
@@ -159,12 +173,12 @@ impl Profile {
         for lib in libs {
             if let Some(ref native) = lib.platform_native() {
                 let path = native.sub_path.as_ref().unwrap();
-                let full_path = LIBS_PATH.join(path);
+                let full_path = self.libs_root.join(path);
                 classpath.push(format!("{}", full_path.display()));
             }
             if let Some(ref artifact) = lib.downloads.artifact {
                 let path = artifact.sub_path.as_ref().unwrap();
-                let full_path = LIBS_PATH.join(path);
+                let full_path = self.libs_root.join(path);
                 classpath.push(format!("{}", full_path.display()));
             }
         }
@@ -190,9 +204,9 @@ impl Profile {
         let fmt_arg = |arg: &str| {
             Some(match arg {
                 "game_directory" => game_dir.to_str().unwrap(),
-                "assets_root" | "game_assets" => ASSETS_PATH.to_str().unwrap(),
+                "assets_root" | "game_assets" => self.assets_root.to_str().unwrap(),
                 "assets_index_name" => &client.assets,
-                "version_name" => self.version(),
+                "version_name" => self.metadata.version(),
                 "classpath" => classpath.as_str(),
                 "natives_directory" => natives_dir.to_str().unwrap(),
                 "auth_uuid" => "e371151a-b6b4-496a-b446-0abcd3e75ec4",
@@ -250,43 +264,45 @@ impl Profile {
 #[derive(Debug)]
 pub struct Profiles {
     fd: File,
+    root: PathBuf,
 }
 
 impl Profiles {
-    pub fn path() -> PathBuf {
-        LAUNCHER_PATH.join("profiles.json")
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
-    pub fn fetch_profiles(&self) -> Vec<Profile> {
+    pub fn fetch_profiles(&self) -> Vec<ProfileMetadata> {
         let reader = BufReader::new(&self.fd);
         serde_json::from_reader(reader).unwrap_or_default()
     }
 
-    pub fn fetch() -> Self {
-        if let Some(parent) = Self::path().parent() {
-            fs::create_dir_all(parent).expect("failed creating parents of profiles.json");
-        }
+    pub fn fetch(launcher_root: &Path) -> Self {
+        fs::create_dir_all(launcher_root).expect("failed creating parents of profiles.json");
+        let path = launcher_root.join("profiles.json");
+
         let fd = OpenOptions::new()
             .read(true)
             .append(true)
             .create(true)
-            .open(Self::path())
+            .open(path)
             .unwrap();
 
-        Self { fd }
+        let root = launcher_root.join("profiles");
+        Self { fd, root }
     }
 
-    pub fn get_named(&self, name: &str) -> Option<Profile> {
+    pub fn get_named(&self, name: &str) -> Option<ProfileMetadata> {
         let profiles = self.fetch_profiles();
         profiles.iter().find(|x| x.name == name).cloned()
     }
 
-    fn write_profiles(&mut self, profiles: &[Profile]) {
+    fn write_profiles(&mut self, profiles: &[ProfileMetadata]) {
         self.fd.set_len(0).unwrap();
         self.fd.seek(SeekFrom::Start(0)).unwrap();
         serde_json::to_writer_pretty(&self.fd, &profiles).unwrap();
     }
-    pub fn add(&mut self, profile: Profile) {
+    pub fn add(&mut self, profile: ProfileMetadata) {
         let mut profiles = self.fetch_profiles();
         profiles.push(profile);
         self.write_profiles(&profiles);
