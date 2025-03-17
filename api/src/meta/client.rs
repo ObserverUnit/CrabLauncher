@@ -41,8 +41,8 @@ pub struct Download {
     #[serde(rename = "path")]
     pub sub_path: Option<PathBuf>,
     // TODO: verify sha1 and size
-    // pub sha1: String,
-    // pub size: i32,
+    pub sha1: String,
+    pub size: i32,
     pub url: String,
 }
 

@@ -1,31 +1,73 @@
 use bytes::Bytes;
 use crab_launcher_api::meta::client::{Client, Download, Index};
 use futures::{stream::FuturesUnordered, StreamExt};
+use sha1::{Digest, Sha1};
 
 use crate::utils::{self, download::DownloadError, errors::CoreError, zip::ZipExtractor};
 use std::{
-    fs,
+    fs::{self, File},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
-async fn download_in(download: &Download, path: &Path) -> Result<Bytes, DownloadError> {
+#[inline(always)]
+async fn download_in_inner(download: &Download, full_path: &Path) -> Result<(), DownloadError> {
+    // validates that `file` isn't corrupted
+    let verify_data = |file: &mut File, size: usize, sha1: &str| {
+        if file.metadata().is_ok_and(|x| (x.size() as usize) < size) {
+            println!("what?");
+            return false;
+        }
+
+        let mut hasher = Sha1::new();
+        let Ok(_) = std::io::copy(file, &mut hasher) else {
+            return false;
+        };
+        let hash = hasher.finalize();
+        if hash.as_slice() != sha1.as_bytes() {
+            return false;
+        }
+
+        true
+    };
+
+    if File::open(full_path)
+        .is_ok_and(|mut f| verify_data(&mut f, download.size as usize, &download.sha1))
+    {
+        return Ok(());
+    }
+
+    let data = utils::download::get(&download.url).await?;
+
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(full_path, &data)?;
+    Ok(())
+}
+
+/// [`download_in`] but reads the file after download or reads it if it is simply already downloaded
+async fn get_download_in(download: &Download, path: &Path) -> Result<Bytes, DownloadError> {
     let full_path = if let Some(ref child) = download.sub_path {
         &path.join(child)
     } else {
         path
     };
 
-    if let Ok(data) = fs::read(full_path) {
-        return Ok(Bytes::from(data));
-    } else {
-        let data = utils::download::get(&download.url).await?;
+    download_in_inner(download, full_path).await?;
+    Ok(Bytes::from(
+        fs::read(full_path).expect("get_download_in: failed to read downloaded file"),
+    ))
+}
 
-        if let Some(parent) = full_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(full_path, &data)?;
-        Ok(data)
-    }
+/// Downloads `download` to `path`
+async fn download_in(download: &Download, path: &Path) -> Result<(), DownloadError> {
+    let full_path = if let Some(ref child) = download.sub_path {
+        &path.join(child)
+    } else {
+        path
+    };
+    download_in_inner(download, full_path).await
 }
 
 /// TODO: benchmark
@@ -62,7 +104,7 @@ async fn download_assets(assets_root: &Path, client: &Client) -> Result<(), Down
     println!("Downloading assets for {}...", id);
     let indexes_dir = assets_root.join("indexes");
     let indexes_path = indexes_dir.join(format!("{}.json", id));
-    let download = download_in(&client.asset_index, &indexes_path).await?;
+    let download = get_download_in(&client.asset_index, &indexes_path).await?;
 
     // downloading objects
     let index: Index = serde_json::from_slice(&download).unwrap();
@@ -120,7 +162,7 @@ async fn install_libs(
             }
             // downloading natives required by lib
             if let Some(native) = lib.platform_native() {
-                let bytes = download_in(native, libs_root).await?;
+                let bytes = get_download_in(native, libs_root).await?;
 
                 if let Some(ref extract_rules) = lib.extract {
                     let natives_dir = path.join(".natives");

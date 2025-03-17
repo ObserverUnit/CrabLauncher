@@ -17,3 +17,4 @@ crab-launcher-api = { path = "../api" }
 semver = "1.0.25"
 bytes = "1.10.1"
 futures = "0.3.31"
+sha1 = "0.10.6"
